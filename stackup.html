@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<!--
+  STACKUP.HTML - a simple tolerance stack-up calculator.
+
+  A web page has three parts:
+    1. HTML  - the content and structure (boxes, text, buttons)
+    2. CSS   - the styling (colors, spacing, fonts) inside <style>
+    3. JavaScript - the logic (the math) inside <script>
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tolerance Stack-Up</title>
+  <!-- Phone app settings (see index.html, manifest.webmanifest and sw.js) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1f6feb">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Tolerance">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
+
+  <!-- ========== PART 2: CSS (how things look) ========== -->
+  <style>
+    body {
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f4f6f8;
+      color: #222;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      position: relative;   /* lets the language button sit in the top-right corner */
+      max-width: 760px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    }
+    h1 { margin-top: 0; font-size: 1.5em; padding-right: 100px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 6px; text-align: left; }
+    th { border-bottom: 2px solid #ccc; font-size: 0.9em; white-space: nowrap; }
+    input, select {
+      width: 100%;
+      padding: 6px;
+      box-sizing: border-box;
+      font-size: 1em;
+    }
+    button {
+      margin-top: 14px;
+      padding: 10px 20px;
+      font-size: 1em;
+      background: #1f6feb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { background: #1558c0; }
+    /* The language switch button in the top-right corner */
+    .lang-button {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      margin: 0;
+      padding: 6px 14px;
+      font-size: 0.9em;
+      background: white;
+      color: #1f6feb;
+      border: 1px solid #1f6feb;
+    }
+    .lang-button:hover { background: #eef4ff; }
+    .results {
+      display: flex;
+      gap: 16px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    .result-box {
+      flex: 1;
+      min-width: 200px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .result-box h2 { margin: 0 0 8px; font-size: 1.1em; }
+    .error { color: #c0392b; margin-top: 12px; }
+    .spec {
+      margin-top: 16px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+    }
+    .spec h2 { margin: 0 0 8px; font-size: 1.1em; }
+    .spec-inputs { display: flex; gap: 16px; flex-wrap: wrap; }
+    .spec-inputs label { flex: 1; min-width: 160px; }
+    /* PASS / FAIL labels */
+    .status {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      color: white;
+      font-weight: bold;
+    }
+    .pass { background: #2e9e44; }
+    .fail { background: #c0392b; }
+
+    /* Monte Carlo histogram */
+    .chart { margin-top: 20px; }
+    .chart h2 { margin: 0 0 4px; font-size: 1.1em; }
+    .chart-area { position: relative; }  /* lets the tooltip sit on top of the chart */
+    canvas { display: block; }
+    .legend { font-size: 0.85em; color: #444; margin-top: 6px; }
+    .swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      vertical-align: middle;
+      margin: 0 4px 0 12px;
+    }
+    .tooltip {
+      position: absolute;
+      display: none;
+      pointer-events: none;   /* the mouse "passes through" it */
+      background: #222;
+      color: white;
+      font-size: 0.8em;
+      padding: 6px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .note { font-size: 0.85em; color: #666; }
+
+    /* Link back to the app's start page (an installed app has no browser back button) */
+    .home-link { display: inline-block; margin-bottom: 8px; color: #1f6feb; text-decoration: none; font-size: 0.9em; }
+
+    /* Phones: tighter spacing, and 16px text in inputs (smaller text makes iPhones
+       zoom in whenever you tap a box). */
+    @media (max-width: 480px) {
+      body { padding: 8px; }
+      .card { padding: 14px; }
+      h1 { font-size: 1.25em; }
+      .lang-button { top: 12px; right: 12px; }
+      input, select { font-size: 16px; }
+      th, td { padding: 4px 2px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========== PART 1: HTML (what is on the page) ========== -->
+  <!--
+    Every piece of text that changes with the language has a data-i18n="..."
+    attribute. Its value is a key into the TEXT dictionary in the JavaScript.
+    ("i18n" is programmer shorthand for "internationalization".)
+  -->
+  <div class="card">
+    <!-- Language switch: shows the name of the OTHER language -->
+    <button id="langButton" class="lang-button" onclick="toggleLanguage()">中文</button>
+    <a class="home-link" href="index.html" data-i18n="home">← Home</a>
+
+    <h1 data-i18n="title">Tolerance Stack-Up Calculator</h1>
+    <p class="note" data-i18n="intro"></p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th data-i18n="colName">Name</th>
+          <th data-i18n="colNominal">Nominal</th>
+          <th data-i18n="colTol">Tolerance (±)</th>
+          <th data-i18n="colDir">Direction</th>
+        </tr>
+      </thead>
+      <!-- The rows are empty here; JavaScript below fills in 5 rows for us. -->
+      <tbody id="rows"></tbody>
+    </table>
+
+    <!-- Gap requirement: the spec limits the result must stay inside.
+         Leave a box empty if there is no limit on that side. -->
+    <div class="spec">
+      <h2 data-i18n="gapTitle">Gap Requirement</h2>
+      <div class="spec-inputs">
+        <label><span data-i18n="specMin">Minimum (LSL)</span>
+          <input id="specMin" type="number" step="any">
+        </label>
+        <label><span data-i18n="specMax">Maximum (USL)</span>
+          <input id="specMax" type="number" step="any">
+        </label>
+      </div>
+    </div>
+
+    <!-- Monte Carlo settings: how many virtual assemblies to build. -->
+    <div class="spec">
+      <h2 data-i18n="mcTitle">Monte Carlo Settings</h2>
+      <div class="spec-inputs">
+        <label><span data-i18n="runs">Number of assemblies (100 – 1,000,000)</span>
+          <input id="runs" type="number" value="10000" min="100" max="1000000" step="1000">
+        </label>
+        <!-- The choose box (a "select"). Each option's value is the number of σ. -->
+        <label><span data-i18n="sigmaStd">Sigma standard</span>
+          <select id="sigmaLevel">
+            <option value="3" data-i18n="opt3">±3σ (PASS if ≤ 0.27% outside)</option>
+            <option value="6" data-i18n="opt6">±6σ (PASS if ≤ 3.4 ppm outside)</option>
+          </select>
+        </label>
+      </div>
+      <p class="note" data-i18n="mcNote"></p>
+    </div>
+
+    <button onclick="calculate()" data-i18n="calculate">Calculate</button>
+
+    <!-- Error messages appear here -->
+    <div id="error" class="error"></div>
+
+    <!-- Results appear here -->
+    <div class="results">
+      <div class="result-box">
+        <h2 data-i18n="worstCase">Worst Case</h2>
+        <div id="worstCase">—</div>
+      </div>
+      <div class="result-box">
+        <h2 data-i18n="rss">RSS (Statistical)</h2>
+        <div id="rss">—</div>
+      </div>
+      <div class="result-box">
+        <h2 data-i18n="monteCarlo">Monte Carlo</h2>
+        <div id="monteCarlo">—</div>
+      </div>
+    </div>
+
+    <!-- The histogram is drawn on this canvas (a blank drawing area). -->
+    <div class="chart">
+      <h2 data-i18n="chartTitle">Monte Carlo: distribution of the gap</h2>
+      <div class="chart-area">
+        <canvas id="histogram"></canvas>
+        <div id="tooltip" class="tooltip"></div>
+      </div>
+      <div class="legend">
+        <span class="swatch" style="background:#1f6feb"></span><span data-i18n="legendIn">Within limits</span>
+        <span class="swatch" style="background:#c0392b"></span><span data-i18n="legendOut">Outside limits</span>
+        <span class="swatch" style="background:none; border-left:2px dashed #c0392b; border-radius:0"></span><span data-i18n="legendSpec">Spec limit (LSL / USL)</span>
+        <span class="swatch" style="background:none; border-left:2px solid #888; border-radius:0"></span><span data-i18n="legendNom">Nominal</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== PART 3: JavaScript (the math) ========== -->
+  <script>
+    // =====================================================================
+    // LANGUAGE (English / Chinese)
+    // =====================================================================
+
+    // The dictionary: every piece of text in both languages, looked up by a key.
+    // Some entries are small functions, because the sentence has numbers inside
+    // it and the word order is different in Chinese.
+    const TEXT = {
+      en: {
+        pageTitle: "Tolerance Stack-Up",
+        home: "← Home",
+        switchTo: "中文",
+        title: "Tolerance Stack-Up Calculator",
+        intro: 'Enter up to 5 dimensions. Leave a row\'s Nominal empty to skip it. ' +
+               'Direction "+" means the dimension adds to the gap; "−" means it subtracts.',
+        colName: "Name",
+        colNominal: "Nominal",
+        colTol: "Tolerance (±)",
+        colDir: "Direction",
+        dimPlaceholder: "Dim ",
+        gapTitle: "Gap Requirement",
+        specMin: "Minimum (LSL)",
+        specMax: "Maximum (USL)",
+        mcTitle: "Monte Carlo Settings",
+        runs: "Number of assemblies (100 – 1,000,000)",
+        sigmaStd: "Sigma standard",
+        opt3: "±3σ (PASS if ≤ 0.27% outside)",
+        opt6: "±6σ (PASS if ≤ 3.4 ppm outside)",
+        mcNote: "Each dimension is treated as normally distributed, with tolerance = ±3σ " +
+                "or ±6σ depending on the standard you choose. " +
+                "Results change slightly on every click because the simulation is random.",
+        calculate: "Calculate",
+        worstCase: "Worst Case",
+        rss: "RSS (Statistical)",
+        monteCarlo: "Monte Carlo",
+        chartTitle: "Monte Carlo: distribution of the gap",
+        legendIn: "Within limits",
+        legendOut: "Outside limits",
+        legendSpec: "Spec limit (LSL / USL)",
+        legendNom: "Nominal",
+        // Result box words
+        nominal: "Nominal",
+        tolerance: "Tolerance",
+        min: "Min",
+        max: "Max",
+        mean: "Mean",
+        stdDev: "Std dev (σ)",
+        smallest: "Smallest",
+        largest: "Largest",
+        belowMin: "Below min",
+        aboveMax: "Above max",
+        outside: "Outside limits",
+        outOf: (n, total) => `${n} of ${total}`,
+        allowed: "Allowed",
+        ppmNow: ppm => `${ppm} ppm now`,
+        specSigma: (z, k) => `Spec limits = ${z}σ (standard ±${k}σ)`,
+        needed: (k, range) => `Needed for ±${k}σ: ${range}`,
+        // Tooltip
+        tipRange: (from, to) => `${from} to ${to}`,
+        tipCount: (n, pct) => `${n} assemblies (${pct}%)`,
+        // Error messages
+        errTol: row => `Row ${row}: tolerance must be zero or positive.`,
+        errNoRows: "Please enter at least one nominal value.",
+        errSpec: "Gap requirement: Minimum must not be larger than Maximum.",
+        errRuns: "Number of assemblies must be a whole number from 100 to 1,000,000."
+      },
+      zh: {
+        pageTitle: "公差叠加计算",
+        home: "← 首页",
+        switchTo: "English",
+        title: "公差叠加计算器",
+        intro: "最多输入 5 个尺寸。名义值留空的行会被跳过。" +
+               "方向“+”表示该尺寸使间隙变大，“−”表示使间隙变小。",
+        colName: "名称",
+        colNominal: "名义值",
+        colTol: "公差（±）",
+        colDir: "方向",
+        dimPlaceholder: "尺寸 ",
+        gapTitle: "间隙要求",
+        specMin: "下限（LSL）",
+        specMax: "上限（USL）",
+        mcTitle: "蒙特卡洛设置",
+        runs: "装配数量（100 – 1,000,000）",
+        sigmaStd: "西格玛标准",
+        opt3: "±3σ（超出 ≤ 0.27% 为合格）",
+        opt6: "±6σ（超出 ≤ 3.4 ppm 为合格）",
+        mcNote: "每个尺寸按正态分布处理，公差 = ±3σ 或 ±6σ，取决于所选的标准。" +
+                "由于模拟是随机的，每次点击结果会略有不同。",
+        calculate: "计算",
+        worstCase: "极值法",
+        rss: "RSS（统计法）",
+        monteCarlo: "蒙特卡洛",
+        chartTitle: "蒙特卡洛：间隙分布",
+        legendIn: "在限值内",
+        legendOut: "超出限值",
+        legendSpec: "规格限（LSL / USL）",
+        legendNom: "名义值",
+        nominal: "名义值",
+        tolerance: "公差",
+        min: "最小值",
+        max: "最大值",
+        mean: "平均值",
+        stdDev: "标准差（σ）",
+        smallest: "最小间隙",
+        largest: "最大间隙",
+        belowMin: "低于下限",
+        aboveMax: "高于上限",
+        outside: "超出限值",
+        outOf: (n, total) => `${total} 个中的 ${n} 个`,
+        allowed: "允许",
+        ppmNow: ppm => `当前 ${ppm} ppm`,
+        specSigma: (z, k) => `规格限 = ${z}σ（标准 ±${k}σ）`,
+        needed: (k, range) => `达到 ±${k}σ 需要：${range}`,
+        tipRange: (from, to) => `${from} 至 ${to}`,
+        tipCount: (n, pct) => `${n} 个装配（${pct}%）`,
+        errTol: row => `第 ${row} 行：公差必须为零或正数。`,
+        errNoRows: "请至少输入一个名义值。",
+        errSpec: "间隙要求：下限不能大于上限。",
+        errRuns: "装配数量必须是 100 到 1,000,000 之间的整数。"
+      }
+    };
+
+    // Which language is showing now. Start with the one used last time, if saved.
+    // (try/catch: some browsers block saving, and then we just use English.)
+    let lang = "en";
+    try {
+      if (localStorage.getItem("stackupLang") === "zh") lang = "zh";
+    } catch (e) {}
+
+    // t = "translate": looks up a key in the current language.
+    // Any extra values (like a row number) are passed on to function entries.
+    function t(key, ...args) {
+      const entry = TEXT[lang][key];
+      return typeof entry === "function" ? entry(...args) : entry;
+    }
+
+    // Runs when the language button is clicked.
+    function toggleLanguage() {
+      lang = lang === "en" ? "zh" : "en";
+      try { localStorage.setItem("stackupLang", lang); } catch (e) {}
+      applyLanguage();
+    }
+
+    // Puts the current language's text everywhere on the page.
+    function applyLanguage() {
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.title = t("pageTitle");
+      document.getElementById("langButton").textContent = t("switchTo");
+
+      // Every element with data-i18n="key" gets the text for that key.
+      for (const el of document.querySelectorAll("[data-i18n]")) {
+        el.textContent = t(el.dataset.i18n);
+      }
+      // The grey hint text inside the Name boxes.
+      for (let i = 1; i <= NUMBER_OF_ROWS; i++) {
+        document.getElementById("name" + i).placeholder = t("dimPlaceholder") + i;
+      }
+      // Re-write any error and results in the new language
+      // (without re-running the random simulation).
+      if (lastError) showError(lastError.key, ...lastError.args);
+      if (lastResults) showResults();
+    }
+
+    // =====================================================================
+    // INPUT ROWS AND MAIN CALCULATION
+    // =====================================================================
+
+    // How many dimension rows to show.
+    const NUMBER_OF_ROWS = 5;
+
+    let lastResults = null;   // the latest results, so they can be re-shown in another language
+    let lastError = null;     // the latest error message key, for the same reason
+
+    // STEP A: Build the 5 input rows so we don't have to type them by hand.
+    const tbody = document.getElementById("rows");
+    for (let i = 1; i <= NUMBER_OF_ROWS; i++) {
+      tbody.innerHTML += `
+        <tr>
+          <td>${i}</td>
+          <td><input id="name${i}"></td>
+          <td><input id="nom${i}" type="number" step="any"></td>
+          <td><input id="tol${i}" type="number" step="any" min="0"></td>
+          <td>
+            <select id="dir${i}">
+              <option value="1">+</option>
+              <option value="-1">−</option>
+            </select>
+          </td>
+        </tr>`;
+    }
+
+    // Shows an error message (in the current language) and remembers it.
+    function showError(key, ...args) {
+      lastError = { key: key, args: args };
+      document.getElementById("error").textContent = t(key, ...args);
+    }
+
+    function clearError() {
+      lastError = null;
+      document.getElementById("error").textContent = "";
+    }
+
+    // STEP B: This function runs when the "Calculate" button is clicked.
+    function calculate() {
+      let nominalTotal = 0;   // sum of nominals (with + or − direction)
+      let worstCaseTol = 0;   // sum of all tolerances
+      let sumOfSquares = 0;   // sum of each tolerance squared (for RSS)
+      let count = 0;          // how many rows were actually used
+      const dims = [];        // list of used rows, for the Monte Carlo simulation
+
+      clearError();
+
+      // Go through each row one at a time.
+      for (let i = 1; i <= NUMBER_OF_ROWS; i++) {
+        const nomText = document.getElementById("nom" + i).value;
+        const tolText = document.getElementById("tol" + i).value;
+
+        // Skip rows where the nominal is empty.
+        if (nomText === "") continue;
+
+        // Turn the typed text into numbers. An empty tolerance counts as 0.
+        const nominal = Number(nomText);
+        const tol = tolText === "" ? 0 : Number(tolText);
+        const direction = Number(document.getElementById("dir" + i).value);
+
+        if (tol < 0) {
+          showError("errTol", i);
+          return; // stop here
+        }
+
+        // The actual math:
+        nominalTotal += direction * nominal;  // + adds, − subtracts
+        worstCaseTol += tol;                  // worst case: tolerances just add up
+        sumOfSquares += tol * tol;            // RSS: square each tolerance...
+        dims.push({ nominal: nominal, tol: tol, direction: direction });
+        count++;
+      }
+
+      if (count === 0) {
+        showError("errNoRows");
+        return;
+      }
+
+      // ...then take the square root of the total.
+      const rssTol = Math.sqrt(sumOfSquares);
+
+      // Read the gap requirement. An empty box becomes null, meaning "no limit".
+      const minText = document.getElementById("specMin").value;
+      const maxText = document.getElementById("specMax").value;
+      const specMin = minText === "" ? null : Number(minText);
+      const specMax = maxText === "" ? null : Number(maxText);
+
+      if (specMin !== null && specMax !== null && specMin > specMax) {
+        showError("errSpec");
+        return;
+      }
+
+      // Read how many assemblies to simulate, and check it's a sensible whole number.
+      const runs = Number(document.getElementById("runs").value);
+      if (!Number.isInteger(runs) || runs < 100 || runs > 1000000) {
+        showError("errRuns");
+        return;
+      }
+
+      // STEP C: Monte Carlo - build many virtual assemblies and look at the gaps.
+      // Which standard was chosen: 3 for ±3σ, or 6 for ±6σ.
+      const sigmaLevel = Number(document.getElementById("sigmaLevel").value);
+      const gaps = simulate(dims, runs, sigmaLevel);
+      const stats = summarize(gaps, specMin, specMax);
+
+      // STEP D: Remember the results, then show them on the page.
+      lastResults = { nominalTotal, worstCaseTol, rssTol, specMin, specMax,
+                      stats, runs, sigmaLevel };
+      showResults();
+      drawHistogram(gaps, stats, specMin, specMax, nominalTotal);
+    }
+
+    // Writes the three result boxes, in the current language.
+    function showResults() {
+      const r = lastResults;
+      document.getElementById("worstCase").innerHTML =
+        formatResult(r.nominalTotal, r.worstCaseTol, r.specMin, r.specMax);
+      document.getElementById("rss").innerHTML =
+        formatResult(r.nominalTotal, r.rssTol, r.specMin, r.specMax);
+      document.getElementById("monteCarlo").innerHTML =
+        formatMonteCarlo(r.stats, r.runs, r.specMin, r.specMax, r.sigmaLevel);
+    }
+
+    // Helper: builds the text for one result box.
+    // toFixed(4) rounds to 4 decimal places.
+    function formatResult(nominal, tol, specMin, specMax) {
+      const min = nominal - tol;
+      const max = nominal + tol;
+
+      let html = `
+        ${t("nominal")}: <b>${nominal.toFixed(4)}</b><br>
+        ${t("tolerance")}: <b>± ${tol.toFixed(4)}</b><br>
+        ${t("min")}: <b>${min.toFixed(4)}</b><br>
+        ${t("max")}: <b>${max.toFixed(4)}</b><br>`;
+
+      // No limits entered? Then there is nothing to check.
+      if (specMin === null && specMax === null) return html;
+
+      // PASS only if the whole range (min to max) sits inside the limits.
+      const pass = (specMin === null || min >= specMin) &&
+                   (specMax === null || max <= specMax);
+
+      if (pass) {
+        html += `<span class="status pass">PASS</span>`;
+      } else {
+        html += `<span class="status fail">FAIL</span>`;
+      }
+      return html;
+    }
+
+    // =====================================================================
+    // MONTE CARLO SIMULATION
+    // =====================================================================
+
+    // Returns one random number from a "bell curve" (normal distribution)
+    // with average 0 and standard deviation 1.
+    // Math.random() only gives evenly spread numbers between 0 and 1, so we
+    // use the Box-Muller formula to turn two of them into one bell-curve number.
+    function randomNormal() {
+      let u = 0;
+      while (u === 0) u = Math.random();  // avoid log(0), which is -infinity
+      const v = Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
+    // Builds `runs` virtual assemblies and returns a list of their gaps.
+    // sigmaLevel is 3 (tolerance = ±3σ) or 6 (tolerance = ±6σ).
+    function simulate(dims, runs, sigmaLevel) {
+      const gaps = [];
+      for (let r = 0; r < runs; r++) {          // one loop = one assembly
+        let gap = 0;
+        for (const d of dims) {                 // one loop = one dimension
+          const sigma = d.tol / sigmaLevel;     // e.g. tolerance = ±3σ, so σ = tol ÷ 3
+          const size = d.nominal + sigma * randomNormal();  // one random part
+          gap += d.direction * size;            // + adds, − subtracts
+        }
+        gaps.push(gap);
+      }
+      return gaps;
+    }
+
+    // Works out the average, spread, smallest, largest and how many gaps
+    // fall outside the limits.
+    function summarize(gaps, specMin, specMax) {
+      let sum = 0;
+      let min = Infinity;
+      let max = -Infinity;
+      let below = 0;   // how many are smaller than the minimum limit
+      let above = 0;   // how many are larger than the maximum limit
+
+      for (const g of gaps) {
+        sum += g;
+        if (g < min) min = g;
+        if (g > max) max = g;
+        if (specMin !== null && g < specMin) below++;
+        if (specMax !== null && g > specMax) above++;
+      }
+      const mean = sum / gaps.length;
+
+      // Standard deviation: how far, on average, the gaps are from the mean.
+      let squares = 0;
+      for (const g of gaps) squares += (g - mean) * (g - mean);
+      const sigma = Math.sqrt(squares / (gaps.length - 1));
+
+      return { mean: mean, sigma: sigma, min: min, max: max, below: below, above: above };
+    }
+
+    // Builds the text for the Monte Carlo result box.
+    function formatMonteCarlo(s, runs, specMin, specMax, sigmaLevel) {
+      // Helper: turns a count into a percentage of all assemblies.
+      const pct = n => (100 * n / runs).toFixed(2) + "%";
+
+      let html = `
+        ${t("mean")}: <b>${s.mean.toFixed(4)}</b><br>
+        ${t("stdDev")}: <b>${s.sigma.toFixed(4)}</b><br>
+        ±${sigmaLevel}σ: <b>± ${(sigmaLevel * s.sigma).toFixed(4)}</b><br>
+        ${t("smallest")}: <b>${s.min.toFixed(4)}</b><br>
+        ${t("largest")}: <b>${s.max.toFixed(4)}</b><br>`;
+
+      // No limits entered? Then there is nothing to check.
+      if (specMin === null && specMax === null) return html;
+
+      if (specMin !== null) {
+        html += `${t("belowMin")}: <b>${pct(s.below)}</b> (${s.below.toLocaleString()})<br>`;
+      }
+      if (specMax !== null) {
+        html += `${t("aboveMax")}: <b>${pct(s.above)}</b> (${s.above.toLocaleString()})<br>`;
+      }
+      const out = s.below + s.above;
+      html += `${t("outside")}: <b>${pct(out)}</b>
+               (${t("outOf", out.toLocaleString(), runs.toLocaleString())})<br>`;
+
+      // How many σ fit between the mean and each spec limit.
+      // (Skipped when σ is 0, i.e. every tolerance is 0, to avoid dividing by 0.)
+      if (s.sigma > 0) {
+        let z = Infinity;
+        if (specMin !== null) z = Math.min(z, (s.mean - specMin) / s.sigma);
+        if (specMax !== null) z = Math.min(z, (specMax - s.mean) / s.sigma);
+        // "±" only when both limits are given; the closer limit decides.
+        const both = specMin !== null && specMax !== null;
+        const zText = (both ? "±" : "") + z.toFixed(2);
+        const mark = z >= sigmaLevel ? "✔" : "✘";
+        html += `${t("specSigma", zText, sigmaLevel)} <b>${mark}</b><br>`;
+
+        // The limits that would give exactly ±sigmaLevel σ (for reference only).
+        const needLo = (s.mean - sigmaLevel * s.sigma).toFixed(4);
+        const needHi = (s.mean + sigmaLevel * s.sigma).toFixed(4);
+        let range;
+        if (both) range = `${needLo} – ${needHi}`;
+        else if (specMin !== null) range = `≤ ${needLo}`;   // the minimum must be at most this
+        else range = `≥ ${needHi}`;                         // the maximum must be at least this
+        html += `${t("needed", sigmaLevel, range)}<br>`;
+      }
+
+      // How many assemblies are allowed outside the limits:
+      //   ±3σ standard: a normal process has 0.27% outside ±3σ.
+      //   ±6σ standard: industry Six Sigma allows 3.4 per million (3.4 ppm).
+      const allowed = sigmaLevel === 6 ? 0.0000034 : 0.0027;
+      const ppm = (out / runs * 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 });
+      html += `${t("allowed")}: <b>${sigmaLevel === 6 ? "≤ 3.4 ppm" : "≤ 0.27%"}</b>
+               (${t("ppmNow", ppm)})<br>`;
+      if (out / runs <= allowed) {
+        html += `<span class="status pass">PASS</span>`;
+      } else {
+        html += `<span class="status fail">FAIL</span>`;
+      }
+      return html;
+    }
+
+    // =====================================================================
+    // HISTOGRAM
+    // =====================================================================
+
+    const BLUE = "#1f6feb";
+    const RED = "#c0392b";
+    const BINS = 50;          // number of bars
+    let lastChart = null;     // remembers the data so we can redraw when the window resizes
+    let hoverInfo = null;     // remembers bar positions for the mouse tooltip
+
+    function drawHistogram(gaps, stats, specMin, specMax, nominal) {
+      lastChart = { gaps, stats, specMin, specMax, nominal };
+
+      const canvas = document.getElementById("histogram");
+      const ctx = canvas.getContext("2d");  // ctx is the "pen" we draw with
+
+      // Size the canvas to fit its box, and keep it sharp on high-resolution screens.
+      const width = canvas.parentElement.clientWidth;
+      const height = 300;
+      const scale = window.devicePixelRatio || 1;
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      // 1. Choose the x-axis range: all the data plus both spec lines, with 5% padding.
+      let lo = stats.min;
+      let hi = stats.max;
+      if (specMin !== null) lo = Math.min(lo, specMin);
+      if (specMax !== null) hi = Math.max(hi, specMax);
+      if (hi === lo) { lo -= 1; hi += 1; }  // every gap identical (all tolerances are 0)
+      const pad = (hi - lo) * 0.05;
+      lo -= pad;
+      hi += pad;
+
+      // 2. Sort every gap into one of the bins (bars) and count them.
+      const binWidth = (hi - lo) / BINS;
+      const counts = new Array(BINS).fill(0);
+      for (const g of gaps) {
+        const i = Math.min(BINS - 1, Math.floor((g - lo) / binWidth));
+        counts[i]++;
+      }
+      let maxCount = 0;
+      for (const c of counts) if (c > maxCount) maxCount = c;
+
+      // 3. The plot area inside the canvas, and helpers that turn values into pixels.
+      const left = 56, right = 16, top = 28, bottom = 36;
+      const plotW = width - left - right;
+      const plotH = height - top - bottom;
+      const baseY = top + plotH;                                   // y of the x-axis
+      const xPx = value => left + (value - lo) / (hi - lo) * plotW;
+      const yPx = count => baseY - count / maxCount * plotH;
+
+      // 4. Light horizontal grid lines with count labels on the left.
+      ctx.font = "12px Arial";
+      ctx.lineWidth = 1;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (let k = 0; k <= 4; k++) {
+        const c = maxCount * k / 4;
+        const y = yPx(c);
+        ctx.strokeStyle = "#e5e5e5";
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(left + plotW, y);
+        ctx.stroke();
+        ctx.fillStyle = "#666";
+        ctx.fillText(Math.round(c).toLocaleString(), left - 6, y);
+      }
+
+      // 5. The bars. Red if the middle of the bar is outside the limits, blue if inside.
+      const barPx = plotW / BINS;
+      for (let i = 0; i < BINS; i++) {
+        if (counts[i] === 0) continue;
+        const center = lo + (i + 0.5) * binWidth;
+        const outside = (specMin !== null && center < specMin) ||
+                        (specMax !== null && center > specMax);
+        ctx.fillStyle = outside ? RED : BLUE;
+        const x = left + i * barPx + 1;       // +1 and −2 leave a 2px gap between bars
+        const w = Math.max(1, barPx - 2);
+        const y = yPx(counts[i]);
+        const r = Math.min(4, w / 2, baseY - y);  // rounded top corners
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, baseY - y, [r, r, 0, 0]);
+        ctx.fill();
+      }
+
+      // 6. The x-axis line and 5 value labels underneath.
+      ctx.strokeStyle = "#999";
+      ctx.beginPath();
+      ctx.moveTo(left, baseY);
+      ctx.lineTo(left + plotW, baseY);
+      ctx.stroke();
+      ctx.fillStyle = "#666";
+      ctx.textBaseline = "top";
+      for (let k = 0; k <= 4; k++) {
+        const value = lo + (hi - lo) * k / 4;
+        // Line up the first label on its left and the last on its right,
+        // so neither one is cut off at the edge of the canvas.
+        ctx.textAlign = k === 0 ? "left" : k === 4 ? "right" : "center";
+        ctx.fillText(value.toFixed(3), xPx(value), baseY + 8);
+      }
+
+      // 7. Vertical lines: nominal (gray), and spec limits (red dashed).
+      drawLine(ctx, xPx(nominal), top, baseY, "#888", false, "");
+      if (specMin !== null) {
+        drawLine(ctx, xPx(specMin), top, baseY, RED, true, "LSL " + specMin);
+      }
+      if (specMax !== null) {
+        drawLine(ctx, xPx(specMax), top, baseY, RED, true, "USL " + specMax);
+      }
+
+      // Remember where the bars are, for the tooltip.
+      hoverInfo = { lo, binWidth, counts, left, barPx, top, runs: gaps.length };
+    }
+
+    // Draws one vertical line with an optional label above it.
+    function drawLine(ctx, x, top, bottom, color, dashed, label) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash(dashed ? [6, 4] : []);
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (label) {
+        ctx.fillStyle = "#222";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(label, x, top - 6);
+      }
+    }
+
+    // Tooltip: when the mouse is over a bar, show its range and count.
+    const canvas = document.getElementById("histogram");
+    const tooltip = document.getElementById("tooltip");
+
+    canvas.addEventListener("mousemove", function (event) {
+      if (!hoverInfo) return;
+      const h = hoverInfo;
+      const mouseX = event.offsetX;
+      const i = Math.floor((mouseX - h.left) / h.barPx);   // which bar is under the mouse?
+      if (i < 0 || i >= BINS) {
+        tooltip.style.display = "none";
+        return;
+      }
+      const from = h.lo + i * h.binWidth;
+      const to = from + h.binWidth;
+      const pct = (100 * h.counts[i] / h.runs).toFixed(2);
+      tooltip.innerHTML = `${t("tipRange", from.toFixed(4), to.toFixed(4))}<br>
+                           ${t("tipCount", h.counts[i].toLocaleString(), pct)}`;
+      tooltip.style.display = "block";
+      // Keep the tooltip inside the chart: show it on the left side near the right edge.
+      const flip = mouseX > canvas.clientWidth - 180;
+      tooltip.style.left = (flip ? mouseX - tooltip.offsetWidth - 12 : mouseX + 12) + "px";
+      tooltip.style.top = (h.top + 4) + "px";
+    });
+
+    canvas.addEventListener("mouseleave", function () {
+      tooltip.style.display = "none";
+    });
+
+    // Redraw the chart when the window changes size, so it always fits.
+    window.addEventListener("resize", function () {
+      if (lastChart) {
+        drawHistogram(lastChart.gaps, lastChart.stats, lastChart.specMin,
+                      lastChart.specMax, lastChart.nominal);
+      }
+    });
+
+    // Finally: show the page in the starting language.
+    applyLanguage();
+
+    // Phone app: keep a copy for offline use (only possible on an https:// address).
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>
