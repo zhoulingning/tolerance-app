@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<!--
+  INDEX.HTML - the start page of the phone app.
+  It links to the two calculators and explains how to install the app.
+
+  The files that turn this folder into an installable app:
+    manifest.webmanifest - the app's name, icon and colors
+    sw.js                - the service worker, which keeps a copy on the phone for offline use
+    icons/               - the app icons
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tolerance Calculator</title>
+  <!-- App settings for Android (manifest) and iPhone (apple-... tags) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1f6feb">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Tolerance">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
+
+  <style>
+    body {
+      font-family: Arial, "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: #f4f6f8;
+      color: #222;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      position: relative;
+      max-width: 640px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    }
+    h1 { margin: 0 0 4px; font-size: 1.5em; padding-right: 90px; }
+    h2 { font-size: 1.1em; margin: 24px 0 8px; }
+    .note { font-size: 0.9em; color: #666; }
+    .lang-button {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 6px 14px;
+      font-size: 0.9em;
+      background: white;
+      color: #1f6feb;
+      border: 1px solid #1f6feb;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    /* The two big buttons to open a calculator */
+    .tool {
+      display: block;
+      margin-top: 12px;
+      padding: 16px;
+      border: 1px solid #d0d7e2;
+      border-left: 5px solid #1f6feb;
+      border-radius: 8px;
+      color: inherit;
+      text-decoration: none;
+      background: #fcfdff;
+    }
+    .tool:hover, .tool:active { background: #eef4ff; }
+    .tool b { display: block; font-size: 1.1em; color: #1f6feb; margin-bottom: 4px; }
+    ol { padding-left: 20px; margin: 6px 0; }
+    li { margin: 4px 0; }
+    .status { margin-top: 16px; font-size: 0.9em; }
+    .status.ready { color: #2e7d32; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <button id="langButton" class="lang-button" onclick="toggleLanguage()">中文</button>
+    <h1 data-i18n="title"></h1>
+    <p class="note" data-i18n="intro"></p>
+
+    <a class="tool" href="assembly.html">
+      <b data-i18n="assemblyTitle"></b>
+      <span class="note" data-i18n="assemblyText"></span>
+    </a>
+    <a class="tool" href="stackup.html">
+      <b data-i18n="stackupTitle"></b>
+      <span class="note" data-i18n="stackupText"></span>
+    </a>
+
+    <!-- Install help: hidden once the app is already installed -->
+    <div id="installHelp">
+      <h2 data-i18n="installTitle"></h2>
+      <p><b>iPhone</b> <span class="note" data-i18n="iphoneBrowser"></span></p>
+      <ol>
+        <li data-i18n="iphone1"></li>
+        <li data-i18n="iphone2"></li>
+        <li data-i18n="iphone3"></li>
+      </ol>
+      <p><b>Android</b> <span class="note" data-i18n="androidBrowser"></span></p>
+      <ol>
+        <li data-i18n="android1"></li>
+        <li data-i18n="android2"></li>
+      </ol>
+    </div>
+
+    <p id="status" class="status note"></p>
+  </div>
+
+  <script>
+    const TEXT = {
+      en: {
+        switchTo: "中文",
+        title: "Tolerance Calculator",
+        intro: "Choose a calculator. Everything is calculated on this phone, and works without internet once installed.",
+        assemblyTitle: "Assembly tolerance (2D)",
+        assemblyText: "Parts, fixtures and carriers located by pins, pin patterns, edge stops or pockets. " +
+                      "Worst case, RSS and Monte Carlo, fit checks, and what contributes most.",
+        stackupTitle: "Simple stack-up (1D)",
+        stackupText: "Up to 5 dimensions in a line, with worst case, RSS and Monte Carlo.",
+        installTitle: "Install on your phone",
+        iphoneBrowser: "(in Safari)",
+        iphone1: "Tap the Share button (the square with an arrow pointing up).",
+        iphone2: "Scroll down and tap \"Add to Home Screen\".",
+        iphone3: "Tap \"Add\". The app icon appears on your home screen.",
+        androidBrowser: "(in Chrome)",
+        android1: "Tap the ⋮ menu at the top right.",
+        android2: "Tap \"Install app\" (or \"Add to Home screen\"), then \"Install\".",
+        saving: "Saving the app on this phone for offline use…",
+        ready: "✔ Ready: this app now works without internet.",
+        noOffline: "Offline use needs the app to be opened from its https:// web address."
+      },
+      zh: {
+        switchTo: "English",
+        title: "公差计算器",
+        intro: "请选择一个计算器。所有计算都在这台手机上完成，安装后不联网也能用。",
+        assemblyTitle: "装配公差（二维）",
+        assemblyText: "零件、夹具和载具通过销、销阵列、边缘挡块或仿形槽定位。提供极值法、RSS、蒙特卡洛、配合检查以及贡献度分析。",
+        stackupTitle: "简单尺寸链（一维）",
+        stackupText: "最多 5 个尺寸串成一条线，提供极值法、RSS 和蒙特卡洛。",
+        installTitle: "安装到手机",
+        iphoneBrowser: "（用 Safari 浏览器）",
+        iphone1: "点“分享”按钮（一个方框加向上的箭头）。",
+        iphone2: "向下滑动，点“添加到主屏幕”。",
+        iphone3: "点“添加”，应用图标就会出现在主屏幕上。",
+        androidBrowser: "（用 Chrome 浏览器）",
+        android1: "点右上角的 ⋮ 菜单。",
+        android2: "点“安装应用”（或“添加到主屏幕”），再点“安装”。",
+        saving: "正在把应用保存到这台手机，以便离线使用……",
+        ready: "✔ 已就绪：这个应用现在不联网也能用。",
+        noOffline: "离线使用需要通过 https:// 网址打开这个应用。"
+      }
+    };
+
+    // The language is shared with the two calculators.
+    let lang = "en";
+    try { if (localStorage.getItem("stackupLang") === "zh") lang = "zh"; } catch (e) {}
+    let statusKey = "saving";
+
+    function t(key) { return TEXT[lang][key]; }
+
+    function toggleLanguage() {
+      lang = lang === "en" ? "zh" : "en";
+      try { localStorage.setItem("stackupLang", lang); } catch (e) {}
+      applyLanguage();
+    }
+
+    function applyLanguage() {
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.title = t("title");
+      document.getElementById("langButton").textContent = t("switchTo");
+      for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+      const status = document.getElementById("status");
+      status.textContent = t(statusKey);
+      status.classList.toggle("ready", statusKey === "ready");
+    }
+
+    function setStatus(key) {
+      statusKey = key;
+      applyLanguage();
+    }
+
+    // Already opened from the home screen? Then the install help isn't needed.
+    const installed = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    if (installed) document.getElementById("installHelp").style.display = "none";
+
+    // Start the service worker (only possible on an https:// or localhost address).
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      navigator.serviceWorker.register("sw.js")
+        .then(() => navigator.serviceWorker.ready)
+        .then(() => setStatus("ready"))
+        .catch(() => setStatus("noOffline"));
+    } else {
+      statusKey = "noOffline";
+    }
+
+    applyLanguage();
+  </script>
+</body>
+</html>

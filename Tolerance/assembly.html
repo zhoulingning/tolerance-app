@@ -1,0 +1,2967 @@
+<!DOCTYPE html>
+<!--
+  ASSEMBLY.HTML - 2D fixture & assembly tolerance calculator (Phase 1).
+
+  The assembly is a TREE of items (fixtures, carriers, blocks, parts).
+  Each item sits on a parent item and is located by:
+    - two pins (round + diamond), with free float or tight fit, or
+    - a known relative tolerance (±dX, ±dY, ±θ), for parts already fixed together.
+  Checks compare any two features (points) and measure ΔX, ΔY or radial offset.
+
+  Like stackup.html, the page has three parts: HTML, CSS and JavaScript.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assembly Tolerance</title>
+  <!-- Phone app settings (see index.html, manifest.webmanifest and sw.js) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1f6feb">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Tolerance">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
+
+  <!-- ========== PART 2: CSS (how things look) ========== -->
+  <style>
+    body {
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f4f6f8;
+      color: #222;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      position: relative;   /* lets the language button sit in the top-right corner */
+      max-width: 1000px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    }
+    h1 { margin-top: 0; font-size: 1.5em; padding-right: 100px; }
+    h2 { font-size: 1.2em; margin: 24px 0 8px; }
+    h3 { font-size: 1em; margin: 12px 0 6px; }
+    h4 { font-size: 1em; margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 4px; text-align: left; }
+    th { border-bottom: 2px solid #ccc; font-size: 0.85em; white-space: nowrap; }
+    input, select {
+      width: 100%;
+      padding: 5px;
+      box-sizing: border-box;
+      font-size: 0.95em;
+    }
+    td input, td select { min-width: 64px; }
+    label { font-size: 0.9em; }
+    button {
+      margin-top: 12px;
+      padding: 10px 20px;
+      font-size: 1em;
+      background: #1f6feb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { background: #1558c0; }
+    /* Smaller, outlined buttons for add / remove / templates */
+    button.small {
+      margin: 6px 6px 0 0;
+      padding: 5px 12px;
+      font-size: 0.85em;
+      background: white;
+      color: #1f6feb;
+      border: 1px solid #1f6feb;
+    }
+    button.small:hover { background: #eef4ff; }
+    button.danger { color: #c0392b; border-color: #c0392b; }
+    button.danger:hover { background: #fdeeee; }
+    .lang-button {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      margin: 0;
+      padding: 6px 14px;
+      font-size: 0.9em;
+      background: white;
+      color: #1f6feb;
+      border: 1px solid #1f6feb;
+    }
+    .lang-button:hover { background: #eef4ff; }
+    .note { font-size: 0.85em; color: #666; }
+    .spec {
+      margin-top: 12px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .row label { flex: 1; min-width: 150px; }
+    .table-wrap { overflow-x: auto; }  /* wide tables scroll sideways on small screens */
+
+    /* One card per item. The colored left border shows fixture or part. */
+    .item-card {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-left: 5px solid #888;
+      border-radius: 6px;
+      background: #fcfcfd;
+    }
+    .item-card.part { border-left-color: #1f6feb; }
+    .locate {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f2f6fc;
+      border-radius: 6px;
+    }
+    .pair-label { min-width: 150px; font-size: 0.85em; }
+    .locate td select { min-width: 100px; }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
+      font-family: inherit;
+      font-size: 0.95em;
+    }
+    /* The "Assembly structure" overview */
+    .structure {
+      margin: 0;
+      padding: 10px;
+      background: #f9fafb;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.85em;
+      overflow-x: auto;
+    }
+    .hidden-mark { color: #a35a00; cursor: help; }
+    /* The "+ Add pattern" form */
+    .pattern-form {
+      margin-top: 10px;
+      padding: 10px;
+      border: 1px dashed #1f6feb;
+      border-radius: 6px;
+      background: #f7faff;
+    }
+    .pattern-form .row { margin-top: 6px; }
+    .checkbox { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+    .checkbox input { width: auto; }
+    /* Histogram + scatter side by side (wrapping on small screens) */
+    .chart-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+    .chart-row .chart-area { flex: 2 1 300px; min-width: 0; }
+    .scatter-area { flex: 1 1 220px; max-width: 300px; margin-top: 10px; }
+    /* Contribution bars */
+    .contrib { margin-top: 12px; }
+    .contrib-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 40%) 1fr 52px;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.85em;
+      margin: 4px 0;
+    }
+    .contrib-bar { background: #eef1f5; border-radius: 4px; height: 10px; overflow: hidden; }
+    .contrib-bar span { display: block; height: 100%; background: #1f6feb; border-radius: 0 4px 4px 0; }
+    .contrib-pct { text-align: right; }
+
+    /* Link back to the app's start page (an installed app has no browser back button) */
+    .home-link { display: inline-block; margin-bottom: 8px; color: #1f6feb; text-decoration: none; font-size: 0.9em; }
+
+    /* Phones: tighter spacing, bigger touch targets, and 16px text in inputs
+       (smaller text makes iPhones zoom in whenever you tap a box). */
+    @media (max-width: 480px) {
+      body { padding: 8px; }
+      .card { padding: 14px; }
+      h1 { font-size: 1.25em; }
+      .lang-button { top: 12px; right: 12px; }
+      input, select, textarea { font-size: 16px; }
+      td input, td select { min-width: 76px; }
+      button.small { padding: 8px 12px; }
+      .result-box { min-width: 100%; }
+    }
+
+    /* Messages */
+    .error { color: #c0392b; margin-top: 6px; }
+    .warning { color: #a35a00; margin-top: 6px; }
+    .info { color: #555; margin-top: 6px; }
+
+    /* Results */
+    .result-card {
+      margin-top: 16px;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+    }
+    .results { display: flex; gap: 12px; flex-wrap: wrap; }
+    .result-box {
+      flex: 1;
+      min-width: 200px;
+      border: 1px solid #e3e3e3;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 0.92em;
+    }
+    .tag {
+      font-size: 0.8em;
+      font-weight: normal;
+      background: #eef1f5;
+      border-radius: 4px;
+      padding: 2px 8px;
+      margin-left: 6px;
+    }
+    .status {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      color: white;
+      font-weight: bold;
+    }
+    .pass { background: #2e9e44; }
+    .fail { background: #c0392b; }
+
+    /* Histogram */
+    .chart-area { position: relative; margin-top: 10px; }
+    canvas { display: block; }
+    .legend { font-size: 0.85em; color: #444; margin-top: 6px; display: none; }
+    .swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      vertical-align: middle;
+      margin: 0 4px 0 12px;
+    }
+    .tooltip {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      background: #222;
+      color: white;
+      font-size: 0.8em;
+      padding: 6px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========== PART 1: HTML (what is on the page) ========== -->
+  <!-- Most of the page is drawn by JavaScript from the "model" (see render()). -->
+  <div class="card">
+    <button id="langButton" class="lang-button" onclick="toggleLanguage()">中文</button>
+    <a class="home-link" href="index.html" data-i18n="home">← Home</a>
+
+    <h1 data-i18n="title">Assembly Tolerance Calculator</h1>
+    <p class="note" data-i18n="intro"></p>
+    <p class="note"><b data-i18n="coordNote"></b></p>
+
+    <!-- Project: name, save / open a file, start new. Work is also kept in this browser. -->
+    <div class="spec">
+      <h4 data-i18n="projectTitle">Project</h4>
+      <div class="row">
+        <label><span data-i18n="projectName"></span>
+          <input id="projectName" onchange="model.name = this.value; saveToBrowser()">
+        </label>
+      </div>
+      <button class="small" onclick="saveProjectFile()" data-i18n="saveFile"></button>
+      <button class="small" onclick="document.getElementById('fileInput').click()" data-i18n="openFile"></button>
+      <button class="small" onclick="newProject()" data-i18n="newProject"></button>
+      <!-- No "accept" filter: some iPhones grey out .json files when one is set. -->
+      <input id="fileInput" type="file" hidden onchange="openProjectFile(this)">
+      <p id="storeNote" class="note"></p>
+    </div>
+
+    <!-- Templates: ready-made examples to start from -->
+    <div class="spec">
+      <h4 data-i18n="templatesTitle">Templates</h4>
+      <button class="small" onclick="loadTemplate(1)" data-i18n="tplCond1"></button>
+      <button class="small" onclick="loadTemplate(2)" data-i18n="tplCond2"></button>
+      <button class="small" onclick="loadTemplate(3)" data-i18n="tplCond3"></button>
+      <button class="small" onclick="loadTemplate(4)" data-i18n="tplCond4"></button>
+      <button class="small" onclick="loadTemplate(5)" data-i18n="tplComp"></button>
+    </div>
+
+    <!-- What this setup is: filled in by the templates, and editable by you -->
+    <h2 data-i18n="descTitle">Setup description</h2>
+    <textarea id="description" rows="3" oninput="fitHeight(this)"
+              onchange="model.description = this.value; saveToBrowser()"></textarea>
+
+    <!-- A live overview of the tree, drawn from the items below -->
+    <h2 data-i18n="structureTitle">Assembly structure</h2>
+    <pre id="structure" class="structure"></pre>
+
+    <!-- The assembly tree: one card per item -->
+    <h2 data-i18n="itemsTitle">Assembly items</h2>
+    <button id="viewButton" class="small" onclick="toggleView()"></button>
+    <div id="items"></div>
+    <button class="small" onclick="addItem()" data-i18n="addItem"></button>
+
+    <!-- What to check between features -->
+    <h2 data-i18n="checksTitle">Checks</h2>
+    <div id="checks"></div>
+    <button class="small" onclick="addCheck()" data-i18n="addCheck"></button>
+
+    <!-- Monte Carlo settings, same as stackup.html -->
+    <div class="spec">
+      <h4 data-i18n="settingsTitle">Monte Carlo Settings</h4>
+      <div class="row">
+        <label><span data-i18n="runs"></span>
+          <input id="runs" type="number" value="10000" min="100" max="1000000" step="1000"
+                 onchange="saveToBrowser()">
+        </label>
+        <label><span data-i18n="sigmaStd"></span>
+          <select id="sigmaLevel" onchange="saveToBrowser()">
+            <option value="3" data-i18n="opt3"></option>
+            <option value="6" data-i18n="opt6"></option>
+          </select>
+        </label>
+      </div>
+      <p class="note" data-i18n="mcNote"></p>
+    </div>
+
+    <button onclick="calculate()" data-i18n="calculate">Calculate</button>
+
+    <!-- Errors, warnings and "calculating..." appear here -->
+    <div id="messages"></div>
+
+    <!-- Results: one card per check -->
+    <div id="results"></div>
+    <div id="legend" class="legend">
+      <span class="swatch" style="background:#1f6feb"></span><span data-i18n="legendIn"></span>
+      <span class="swatch" style="background:#c0392b"></span><span data-i18n="legendOut"></span>
+      <span class="swatch" style="background:none; border-left:2px dashed #c0392b; border-radius:0"></span><span data-i18n="legendSpec"></span>
+      <span class="swatch" style="background:none; border-left:2px solid #888; border-radius:0"></span><span data-i18n="legendNom"></span>
+    </div>
+  </div>
+
+  <!-- ========== PART 3: JavaScript ========== -->
+  <script>
+    // =====================================================================
+    // LANGUAGE (English / Chinese) - same system as stackup.html
+    // =====================================================================
+
+    const TEXT = {
+      en: {
+        pageTitle: "Assembly Tolerance",
+        switchTo: "中文",
+        title: "Assembly Tolerance Calculator",
+        intro: "Build the assembly as a tree: each item (fixture, carrier, block or part) sits on a " +
+               "parent item and is located by two pins, or by a known relative tolerance if it is " +
+               "already fixed to its parent. Then add checks between any two features.",
+        coordNote: "Enter all X / Y coordinates in ONE shared assembly coordinate system (mm), " +
+                   "exactly as you read them from the CAD assembly.",
+        templatesTitle: "Templates",
+        tplCond1: "Condition 1: A and B on one carrier",
+        tplCond2: "Condition 2: B on an align block",
+        tplCond3: "Condition 3: B on pins on all four sides",
+        tplCond1Desc: "Condition 1 — two parts on one carrier. Part A and Part B are each placed on the " +
+                      "same carrier by two pins (a round pin and a diamond pin) with a free fit, so each " +
+                      "part can sit anywhere within its pin clearance. The checks measure how far point " +
+                      "PtA on A and point PtB on B are from each other after assembly (ΔX, ΔY and radial offset).",
+        tplCond2Desc: "Condition 2 — one part through an align block. Part A is placed on the carrier by " +
+                      "two pins. An align block is placed on the same carrier by two pins, and Part B is " +
+                      "placed on the align block by two pins, so B also carries the align block's errors. " +
+                      "The checks measure PtA against PtB.",
+        tplCond3Desc: "Condition 3 — pins on all four sides. Part A is placed on the carrier by two pins. " +
+                      "Part B is a rectangular part with a row of holes on each of its four sides, and the " +
+                      "carrier has a matching pin in every hole. The pins tighten Part B, so it sits at the " +
+                      "best fit through all the holes. The checks measure PtA against PtB.",
+        descTitle: "Setup description",
+        descHint: "Describe this setup: what is located on what, and what you want to check.",
+        structureTitle: "Assembly structure",
+        viewFull: "Show all columns (±Ø, ⌀ Position)",
+        viewSimple: "Show fewer columns",
+        hiddenMark: "This row has ±Ø or ⌀ Position values that are hidden in the simple view. They are still used.",
+        typeFixtureShort: "fixture",
+        typePartShort: "part",
+        modeFreeShort: "free",
+        modeTightShort: "tight",
+        sumTwoPin: (mode, pairs) => `2 pins, ${mode} (${pairs})`,
+        sumKnown: (x, y, tt) => `known tolerance ±dX ${x}, ±dY ${y}, ±θ ${tt}°`,
+        sumPattern: (mode, n) => `pin pattern, ${mode}, ${n} pairs`,
+        methodPattern: "Pin pattern (many pins, paired by position)",
+        patternPairs: (n, list) => `${n} hole/pin pairs found at the same positions: ${list}`,
+        patternNeed: parent => `Needs at least 2 pairs: a hole on this item and a pin on ${parent} at the ` +
+                               `same X / Y (or the other way round). Use "+ Add pattern" to create them.`,
+        addPattern: "+ Add pattern",
+        patShape: "Pattern",
+        shapeRect: "Rectangle (a row on each of the 4 sides)",
+        shapeRow: "Single row",
+        patPrefix: "Name prefix",
+        centerX: "Center X",
+        centerY: "Center Y",
+        rectW: "W (left row to right row)",
+        rectH: "H (bottom row to top row)",
+        nx: "Count, top & bottom rows",
+        px: "Pitch, top & bottom rows",
+        ny: "Count, left & right rows",
+        py: "Pitch, left & right rows",
+        startX: "Start X",
+        startY: "Start Y",
+        direction: "Direction",
+        pitch: "Pitch",
+        count: "Count",
+        kindPins: "pins",
+        kindHoles: "holes",
+        mateOn: (name, kind) => `Also add matching ${kind} on ${name} (parent) at the same positions`,
+        setPattern: "Set this item's locating method to Pin pattern",
+        create: "Create",
+        cancel: "Cancel",
+        errPatternForm: "Check the pattern numbers: counts must be whole numbers from 0 to 200, " +
+                        "with at least one feature in total.",
+        errPattern: name => `${name}: a pin pattern needs at least 2 hole/pin pairs at the same X / Y.`,
+        patternMade: n => `Created ${n} features.`,
+        // Phase 2: edge stops, pocket, fit, charts
+        // Phase 3: project files, browser save, component template
+        home: "← Home",
+        sharedFile: name => `Shared ${name}.`,
+        projectTitle: "Project",
+        projectName: "Project name (also the file name)",
+        saveFile: "Save project file",
+        openFile: "Open project file",
+        newProject: "New empty project",
+        newFixture: "Fixture",
+        autoSaveOn: "Your work is saved automatically in this browser. To back it up or share it, use \"Save project file\".",
+        autoSaveOff: "This browser blocks automatic saving (for example a private window). Use \"Save project file\" to keep your work.",
+        savedFile: name => `Saved ${name}. You'll find it in your Downloads folder.`,
+        openedFile: name => `Opened ${name}.`,
+        badFile: name => `${name} is not a project file from this calculator.`,
+        restored: "Your last work was restored from this browser.",
+        confirmReplace: "This replaces your current setup. Changes that are not saved in a project file will be lost. Continue?",
+        tplComp: "Component: A+B+C, then D via fixture AB",
+        tplCompDesc: "Component example — a sub-assembly plus a second fixture. Part A is located on fixture AA by " +
+                     "two pins. Part B is already fixed to A, and Part C is already fixed to B (known relative " +
+                     "tolerances). Fixture AB is located on fixture AA by two pins, and Part D is located on fixture " +
+                     "AB by two pins. D's two pins must go into holes on B and C. The checks show how D sits " +
+                     "relative to A, B and C, and whether D fits onto A+B+C as a whole.",
+        tplCond4: "Condition 4: edge stops, pocket & fit",
+        tplCond4Desc: "Condition 4 — edge stops, a pocket, and a fit. Part A is pushed against three stop " +
+                      "pins on the carrier: two under its bottom edge and one at its left edge. Part B sits " +
+                      "loosely in a pocket of the carrier. B's pin must go into A's hole: the Fit check counts " +
+                      "how many assemblies can't be put together, and the radial check shows how far the pin " +
+                      "is from the hole center.",
+        methodStops: "Edge stops (2 + 1, pushed)",
+        methodPocket: "Pocket / nest (floats in the clearance)",
+        pushPrimary: "Push direction, edge with 2 stops",
+        pushSecondary: "Push direction, edge with 1 stop",
+        stop1: "Stop 1 · edge with 2 stops",
+        stop2: "Stop 2 · edge with 2 stops",
+        stop3: "Stop 3 · edge with 1 stop",
+        onParentStop: name => `Stop on ${name} (parent)`,
+        onSelfEdge: name => `Edge point on ${name}`,
+        stopsNote: "The part is pushed in the chosen directions until its edge points touch the stops. " +
+                   "A pin stop touches with its side (center − radius); a point stop touches at the point. " +
+                   "Edge profile tolerance = the edge point's ±X or ±Y.",
+        pocketCenter: "Pocket center (on the parent)",
+        partCenter: "Part center (on this item)",
+        partSizeX: "Part size X",
+        partSizeY: "Part size Y",
+        clearX: "Clearance X (total)",
+        clearY: "Clearance Y (total)",
+        clearXTol: "± Clearance X",
+        clearYTol: "± Clearance Y",
+        pocketNote: "The part can shift and turn freely inside the pocket until a corner touches a wall. " +
+                    "Clearance = pocket size − part size (both sides together).",
+        sumStops: (n1, n2) => `edge stops, pushed ${n1} / ${n2}`,
+        sumPocket: (cx, cy) => `pocket, clearance ${cx} × ${cy}`,
+        errStops: name => `${name}: choose all three stops (a stop on the parent and an edge point on this item for each).`,
+        errStopsDir: name => `${name}: the two push directions must be at right angles (one X, one Y).`,
+        errStopsSpread: name => `${name}: stops 1 and 2 must be at different places along their edge.`,
+        warnStopNominal: (name, f) => `${name}: edge point ${f} does not touch its stop at nominal size.`,
+        errPocket: name => `${name}: choose the pocket center and the part center, and enter part sizes above 0.`,
+        warnPocketNominal: name => `${name}: the pocket center and part center are not at the same X / Y.`,
+        fitMeasure: "Fit (all pairs)",
+        allOthers: "All other items (except its parent)",
+        checksNote: "ΔX / ΔY / Radial: choose two features. Fit: choose the moving item (From) and what it " +
+                    "fits onto (To); its holes and pins are paired with mates at the same X / Y.",
+        errFit: name => `Check "${name}": choose the moving item and what it fits onto; they need at least ` +
+                        `one hole/pin pair at the same X / Y.`,
+        fitPairsShort: n => `${n} pairs`,
+        mcOnlyFit: "A fit is judged by Monte Carlo only.",
+        fitNote: "Value = the smallest clearance margin over all pairs: (hole Ø − pin Ø) / 2 − offset. " +
+                 "Below 0 means at least one pin hits its hole wall, so the part can't be assembled.",
+        scatterNote: "Where the To feature lands relative to the From feature. Dashed circle = Max (USL).",
+        contribTitle: "What contributes most",
+        contribNote: "Share of the statistical (RSS) variation. Tighten the top items first.",
+        other: "Other",
+        part_x: "±X",
+        part_y: "±Y",
+        part_pos: "⌀ Position",
+        part_r: "Ø (stop)",
+        part_float1: "pin 1 float",
+        part_float2: "pin 2 float",
+        part_kx: "±dX",
+        part_ky: "±dY",
+        part_kt: "±θ",
+        part_float: "float",
+        itemsTitle: "Assembly items",
+        addItem: "+ Add item",
+        checksTitle: "Checks",
+        addCheck: "+ Add check",
+        settingsTitle: "Monte Carlo Settings",
+        runs: "Number of assemblies (100 – 1,000,000)",
+        sigmaStd: "Sigma standard",
+        opt3: "±3σ (PASS if ≤ 0.27% outside)",
+        opt6: "±6σ (PASS if ≤ 3.4 ppm outside)",
+        mcNote: "Dimensions and positions are normally distributed with tolerance = ±3σ or ±6σ. " +
+                "Free pin float is uniform: the part can sit anywhere in the clearance.",
+        calculate: "Calculate",
+        legendIn: "Within limits",
+        legendOut: "Outside limits",
+        legendSpec: "Spec limit (LSL / USL)",
+        legendNom: "Nominal",
+        // Item editor
+        itemName: "Name",
+        itemType: "Type",
+        typeFixture: "Fixture / carrier / block",
+        typePart: "Part",
+        locatedOn: "Located on",
+        noneRoot: "— nothing (base item) —",
+        remove: "Remove",
+        rootNote: "Base item: every other item is located from here.",
+        locateMethod: "Locating method",
+        methodTwoPin: "Two pins (round + diamond)",
+        methodKnown: "Known relative tolerance (already fixed)",
+        floatMode: "Pin fit",
+        modeFree: "Free: anywhere in the clearance",
+        modeTight: "Tight: no clearance",
+        pair1: "Pair 1 · round pin (sets X / Y)",
+        pair2: "Pair 2 · diamond pin or slot (sets rotation)",
+        onParent: name => `Feature on ${name} (parent)`,
+        onSelf: name => `Feature on ${name}`,
+        pivot: "Reference point",
+        knownX: "±dX",
+        knownY: "±dY",
+        knownT: "±θ (degrees)",
+        features: "Features",
+        addFeature: "+ Add feature",
+        choose: "— choose —",
+        colName: "Name",
+        colKind: "Kind",
+        kindHole: "Hole",
+        kindPin: "Pin",
+        kindPoint: "Point",
+        colX: "X",
+        colY: "Y",
+        colD: "Ø",
+        colDTol: "±Ø",
+        colTolX: "±X",
+        colTolY: "±Y",
+        colTP: "⌀ Position",
+        newItemName: "Item",
+        newFeatureName: "F",
+        newCheckName: "Check",
+        colFrom: "From",
+        colTo: "To",
+        colMeasure: "Measure",
+        colMin: "Min (LSL)",
+        colMax: "Max (USL)",
+        radial: "Radial offset",
+        // Template names
+        tplCarrier: "Carrier",
+        tplPartA: "Part A",
+        tplPartB: "Part B",
+        tplBlock: "Align block",
+        // Results
+        nominalLine: v => `Nominal value: ${v}`,
+        worstCase: "Worst Case",
+        rss: "RSS (Statistical)",
+        monteCarlo: "Monte Carlo",
+        mcOnly: "Radial offset can point in any direction, so it is judged by Monte Carlo only.",
+        nominal: "Nominal",
+        tolerance: "Tolerance",
+        min: "Min",
+        max: "Max",
+        mean: "Mean",
+        stdDev: "Std dev (σ)",
+        smallest: "Smallest",
+        largest: "Largest",
+        belowMin: "Below min",
+        aboveMax: "Above max",
+        outside: "Outside limits",
+        outOf: (n, total) => `${n} of ${total}`,
+        allowed: "Allowed",
+        ppmNow: ppm => `${ppm} ppm now`,
+        specSigma: (z, k) => `Spec limits = ${z}σ (standard ±${k}σ)`,
+        needed: (k, range) => `Needed for ±${k}σ: ${range}`,
+        tipRange: (from, to) => `${from} to ${to}`,
+        tipCount: (n, pct) => `${n} assemblies (${pct}%)`,
+        // Messages
+        calculating: "Calculating…",
+        errRuns: "Number of assemblies must be a whole number from 100 to 1,000,000.",
+        errRoot: "There must be exactly one base item (an item located on nothing).",
+        errUnreached: name => `${name}: its "Located on" chain never reaches the base item.`,
+        errPins: name => `${name}: choose all four pin-pair features (two on the parent, two on this item), all different.`,
+        errPinsSame: name => `${name}: the two parent pins are at the same position.`,
+        errFreeKinds: (name, a, b) => `${name}: with a free fit, ${a} and ${b} must be one hole and one pin.`,
+        errPivot: name => `${name}: choose a reference point for the known tolerance.`,
+        errNoChecks: "Add at least one check.",
+        errCheckFeatures: name => `Check "${name}": choose both features.`,
+        errCheckSpec: name => `Check "${name}": Min must not be larger than Max.`,
+        errHasChildren: name => `${name} has items located on it. Remove or move those first.`,
+        warnNominal: name => `${name}: the pin and hole coordinates of a pair are not the same. ` +
+                             `The nominal design already has an offset.`,
+        warnInterference: (name, a, b) => `${name}: ${a} / ${b} has interference at nominal size (hole smaller than pin).`
+      },
+      zh: {
+        pageTitle: "装配公差分析",
+        switchTo: "English",
+        title: "装配公差计算器",
+        intro: "把装配建成一棵树：每个物体（夹具、载具、对位块或零件）放在一个上级物体上，" +
+               "用两销定位；如果它已经和上级固定在一起，就用已知相对公差。然后在任意两个特征之间添加检查项。",
+        coordNote: "所有 X / Y 坐标都用同一个装配坐标系输入（mm），也就是直接从 CAD 装配里读出的数值。",
+        templatesTitle: "模板",
+        tplCond1: "工况 1：A 和 B 在同一载具上",
+        tplCond2: "工况 2：B 在对位块上",
+        tplCond3: "工况 3：B 由四边的销定位",
+        tplCond1Desc: "工况 1 —— 两个零件在同一载具上。零件 A 和零件 B 分别用两个销（一个圆销、一个菱形销）" +
+                      "以自由配合定位在同一个载具上，所以每个零件都可以在销的间隙内任意位置。" +
+                      "检查项测量装配后 A 上的点 PtA 与 B 上的点 PtB 之间的偏差（ΔX、ΔY 和径向偏移）。",
+        tplCond2Desc: "工况 2 —— 零件通过对位块定位。零件 A 用两个销定位在载具上。对位块用两个销定位在" +
+                      "同一个载具上，零件 B 再用两个销定位在对位块上，因此 B 还叠加了对位块的误差。" +
+                      "检查项测量 PtA 与 PtB 之间的偏差。",
+        tplCond3Desc: "工况 3 —— 四边都有销。零件 A 用两个销定位在载具上。零件 B 是矩形零件，四条边上各有" +
+                      "一排孔，载具上每个孔都有对应的销。销把零件 B 压紧，所以它落在穿过所有孔的最佳拟合位置。" +
+                      "检查项测量 PtA 与 PtB 之间的偏差。",
+        descTitle: "工况描述",
+        descHint: "描述这个工况：什么定位在什么上，以及要检查什么。",
+        structureTitle: "装配结构",
+        viewFull: "显示全部列（±Ø、⌀ 位置度）",
+        viewSimple: "只显示常用列",
+        hiddenMark: "这一行在简洁视图中隐藏了 ±Ø 或 ⌀ 位置度的数值，它们仍然参与计算。",
+        typeFixtureShort: "夹具",
+        typePartShort: "零件",
+        modeFreeShort: "自由",
+        modeTightShort: "压紧",
+        sumTwoPin: (mode, pairs) => `两销，${mode}（${pairs}）`,
+        sumKnown: (x, y, tt) => `已知公差 ±dX ${x}，±dY ${y}，±θ ${tt}°`,
+        sumPattern: (mode, n) => `销阵列，${mode}，${n} 对`,
+        methodPattern: "销阵列（多销，按位置自动配对）",
+        patternPairs: (n, list) => `在相同位置找到 ${n} 对孔/销：${list}`,
+        patternNeed: parent => `至少需要 2 对：本物体上的孔和 ${parent} 上的销位于相同 X / Y（或者反过来）。` +
+                               `可以用“+ 添加阵列”来生成。`,
+        addPattern: "+ 添加阵列",
+        patShape: "阵列类型",
+        shapeRect: "矩形（四条边各一排）",
+        shapeRow: "单排",
+        patPrefix: "名称前缀",
+        centerX: "中心 X",
+        centerY: "中心 Y",
+        rectW: "W（左排到右排）",
+        rectH: "H（下排到上排）",
+        nx: "上下排数量",
+        px: "上下排间距",
+        ny: "左右排数量",
+        py: "左右排间距",
+        startX: "起点 X",
+        startY: "起点 Y",
+        direction: "方向",
+        pitch: "间距",
+        count: "数量",
+        kindPins: "销",
+        kindHoles: "孔",
+        mateOn: (name, kind) => `同时在 ${name}（上级）的相同位置添加对应的${kind}`,
+        setPattern: "把本物体的定位方式设为销阵列",
+        create: "生成",
+        cancel: "取消",
+        errPatternForm: "请检查阵列数值：数量必须是 0 到 200 的整数，且总共至少有一个特征。",
+        errPattern: name => `${name}：销阵列至少需要 2 对位于相同 X / Y 的孔/销。`,
+        patternMade: n => `已生成 ${n} 个特征。`,
+        home: "← 首页",
+        sharedFile: name => `已分享 ${name}。`,
+        projectTitle: "项目",
+        projectName: "项目名称（也是文件名）",
+        saveFile: "保存项目文件",
+        openFile: "打开项目文件",
+        newProject: "新建空项目",
+        newFixture: "夹具",
+        autoSaveOn: "你的输入会自动保存在这个浏览器里。如需备份或分享给别人，请用“保存项目文件”。",
+        autoSaveOff: "这个浏览器禁止自动保存（例如无痕窗口）。请用“保存项目文件”来保留你的输入。",
+        savedFile: name => `已保存 ${name}，可以在“下载”文件夹里找到。`,
+        openedFile: name => `已打开 ${name}。`,
+        badFile: name => `${name} 不是本计算器的项目文件。`,
+        restored: "已从这个浏览器恢复你上次的输入。",
+        confirmReplace: "这会替换当前的工况。没有保存为项目文件的修改将会丢失。确定继续吗？",
+        tplComp: "组件：A+B+C，再经夹具 AB 装 D",
+        tplCompDesc: "组件示例 —— 一个子组件加第二个夹具。零件 A 用两个销定位在夹具 AA 上。零件 B 已经固定在 A 上，" +
+                     "零件 C 已经固定在 B 上（已知相对公差）。夹具 AB 用两个销定位在夹具 AA 上，零件 D 用两个销" +
+                     "定位在夹具 AB 上。D 的两个销必须插进 B 和 C 上的孔。检查项显示 D 相对 A、B、C 的位置，" +
+                     "以及 D 能否整体装到 A+B+C 上。",
+        tplCond4: "工况 4：边缘挡块、仿形槽和配合",
+        tplCond4Desc: "工况 4 —— 边缘挡块、仿形槽和配合。零件 A 被推靠在载具的三个挡销上：底边两个、左边一个。" +
+                      "零件 B 松放在载具的仿形槽里。B 的销必须插进 A 的孔：配合检查统计有多少装配装不进去，" +
+                      "径向检查显示销偏离孔中心多远。",
+        methodStops: "边缘挡块（2 + 1，推靠）",
+        methodPocket: "仿形槽（在间隙内浮动）",
+        pushPrimary: "推靠方向（有 2 个挡块的边）",
+        pushSecondary: "推靠方向（有 1 个挡块的边）",
+        stop1: "挡块 1 · 有 2 个挡块的边",
+        stop2: "挡块 2 · 有 2 个挡块的边",
+        stop3: "挡块 3 · 有 1 个挡块的边",
+        onParentStop: name => `${name} 上的挡块（上级）`,
+        onSelfEdge: name => `${name} 上的边缘点`,
+        stopsNote: "零件沿所选方向被推动，直到边缘点碰到挡块。挡销用侧面接触（中心 − 半径）；点挡块在该点接触。" +
+                   "边缘轮廓度 = 边缘点的 ±X 或 ±Y。",
+        pocketCenter: "槽中心（上级上）",
+        partCenter: "零件中心（本物体上）",
+        partSizeX: "零件 X 尺寸",
+        partSizeY: "零件 Y 尺寸",
+        clearX: "X 向间隙（总）",
+        clearY: "Y 向间隙（总）",
+        clearXTol: "± X 向间隙",
+        clearYTol: "± Y 向间隙",
+        pocketNote: "零件可以在槽内自由平移和转动，直到某个角碰到槽壁。间隙 = 槽尺寸 − 零件尺寸（两侧合计）。",
+        sumStops: (n1, n2) => `边缘挡块，推靠 ${n1} / ${n2}`,
+        sumPocket: (cx, cy) => `仿形槽，间隙 ${cx} × ${cy}`,
+        errStops: name => `${name}：请选择全部三个挡块（每个都要选上级上的挡块和本物体上的边缘点）。`,
+        errStopsDir: name => `${name}：两个推靠方向必须互相垂直（一个 X、一个 Y）。`,
+        errStopsSpread: name => `${name}：挡块 1 和挡块 2 必须在边上的不同位置。`,
+        warnStopNominal: (name, f) => `${name}：边缘点 ${f} 在名义尺寸下没有碰到挡块。`,
+        errPocket: name => `${name}：请选择槽中心和零件中心，并输入大于 0 的零件尺寸。`,
+        warnPocketNominal: name => `${name}：槽中心和零件中心的 X / Y 不一致。`,
+        fitMeasure: "配合（所有孔销对）",
+        allOthers: "所有其他物体（上级除外）",
+        checksNote: "ΔX / ΔY / 径向：选两个特征。配合：选移动的物体（起点）和它要装上去的物体（终点），" +
+                    "它的孔和销会自动与相同 X / Y 的对应特征配对。",
+        errFit: name => `检查项“${name}”：请选择移动物体和它要装上去的物体，它们之间至少要有一对位于相同 X / Y 的孔/销。`,
+        fitPairsShort: n => `${n} 对`,
+        mcOnlyFit: "配合只用蒙特卡洛判断。",
+        fitNote: "数值 = 所有孔销对中最小的间隙余量：(孔 Ø − 销 Ø) / 2 − 偏移。小于 0 表示至少有一个销碰到孔壁，零件装不进去。",
+        scatterNote: "终点特征相对起点特征落在哪里。虚线圆 = 上限（USL）。",
+        contribTitle: "贡献最大的因素",
+        contribNote: "在统计（RSS）波动中所占的比例。优先收紧排在前面的项。",
+        other: "其他",
+        part_x: "±X",
+        part_y: "±Y",
+        part_pos: "⌀ 位置度",
+        part_r: "Ø（挡块）",
+        part_float1: "销 1 浮动",
+        part_float2: "销 2 浮动",
+        part_kx: "±dX",
+        part_ky: "±dY",
+        part_kt: "±θ",
+        part_float: "浮动",
+        itemsTitle: "装配物体",
+        addItem: "+ 添加物体",
+        checksTitle: "检查项",
+        addCheck: "+ 添加检查项",
+        settingsTitle: "蒙特卡洛设置",
+        runs: "装配数量（100 – 1,000,000）",
+        sigmaStd: "西格玛标准",
+        opt3: "±3σ（超出 ≤ 0.27% 为合格）",
+        opt6: "±6σ（超出 ≤ 3.4 ppm 为合格）",
+        mcNote: "尺寸和位置度按正态分布，公差 = ±3σ 或 ±6σ。销的自由浮动按均匀分布：零件可以在间隙内任意位置。",
+        calculate: "计算",
+        legendIn: "在限值内",
+        legendOut: "超出限值",
+        legendSpec: "规格限（LSL / USL）",
+        legendNom: "名义值",
+        itemName: "名称",
+        itemType: "类型",
+        typeFixture: "夹具 / 载具 / 对位块",
+        typePart: "零件",
+        locatedOn: "定位在",
+        noneRoot: "— 无（基准物体）—",
+        remove: "删除",
+        rootNote: "基准物体：其他所有物体都从这里开始定位。",
+        locateMethod: "定位方式",
+        methodTwoPin: "两销定位（圆销 + 菱形销）",
+        methodKnown: "已知相对公差（已固定）",
+        floatMode: "销配合",
+        modeFree: "自由：在间隙内任意位置",
+        modeTight: "压紧：无间隙",
+        pair1: "第 1 对 · 圆销（确定 X / Y）",
+        pair2: "第 2 对 · 菱形销或长圆孔（确定旋转）",
+        onParent: name => `${name} 上的特征（上级）`,
+        onSelf: name => `${name} 上的特征`,
+        pivot: "参考点",
+        knownX: "±dX",
+        knownY: "±dY",
+        knownT: "±θ（度）",
+        features: "特征",
+        addFeature: "+ 添加特征",
+        choose: "— 请选择 —",
+        colName: "名称",
+        colKind: "类型",
+        kindHole: "孔",
+        kindPin: "销",
+        kindPoint: "点",
+        colX: "X",
+        colY: "Y",
+        colD: "Ø",
+        colDTol: "±Ø",
+        colTolX: "±X",
+        colTolY: "±Y",
+        colTP: "⌀ 位置度",
+        newItemName: "物体",
+        newFeatureName: "F",
+        newCheckName: "检查",
+        colFrom: "起点",
+        colTo: "终点",
+        colMeasure: "测量",
+        colMin: "下限（LSL）",
+        colMax: "上限（USL）",
+        radial: "径向偏移",
+        tplCarrier: "载具",
+        tplPartA: "零件 A",
+        tplPartB: "零件 B",
+        tplBlock: "对位块",
+        nominalLine: v => `名义值：${v}`,
+        worstCase: "极值法",
+        rss: "RSS（统计法）",
+        monteCarlo: "蒙特卡洛",
+        mcOnly: "径向偏移可以指向任何方向，所以只用蒙特卡洛判断。",
+        nominal: "名义值",
+        tolerance: "公差",
+        min: "最小值",
+        max: "最大值",
+        mean: "平均值",
+        stdDev: "标准差（σ）",
+        smallest: "最小值",
+        largest: "最大值",
+        belowMin: "低于下限",
+        aboveMax: "高于上限",
+        outside: "超出限值",
+        outOf: (n, total) => `${total} 个中的 ${n} 个`,
+        allowed: "允许",
+        ppmNow: ppm => `当前 ${ppm} ppm`,
+        specSigma: (z, k) => `规格限 = ${z}σ（标准 ±${k}σ）`,
+        needed: (k, range) => `达到 ±${k}σ 需要：${range}`,
+        tipRange: (from, to) => `${from} 至 ${to}`,
+        tipCount: (n, pct) => `${n} 个装配（${pct}%）`,
+        calculating: "正在计算…",
+        errRuns: "装配数量必须是 100 到 1,000,000 之间的整数。",
+        errRoot: "必须有且只有一个基准物体（“定位在”选“无”的物体）。",
+        errUnreached: name => `${name}：它的“定位在”关系无法追溯到基准物体。`,
+        errPins: name => `${name}：请选择全部四个销对特征（上级两个、本物体两个），且各不相同。`,
+        errPinsSame: name => `${name}：上级的两个销位置相同。`,
+        errFreeKinds: (name, a, b) => `${name}：自由配合时，${a} 和 ${b} 必须一个是孔、一个是销。`,
+        errPivot: name => `${name}：请为已知公差选择参考点。`,
+        errNoChecks: "请至少添加一个检查项。",
+        errCheckFeatures: name => `检查项“${name}”：请选择两个特征。`,
+        errCheckSpec: name => `检查项“${name}”：下限不能大于上限。`,
+        errHasChildren: name => `${name} 上还定位着其他物体，请先删除或移走它们。`,
+        warnNominal: name => `${name}：某一对销和孔的坐标不一致，名义设计本身就有偏移。`,
+        warnInterference: (name, a, b) => `${name}：${a} / ${b} 在名义尺寸下是过盈（孔比销小）。`
+      }
+    };
+
+    let lang = "en";
+    try {
+      if (localStorage.getItem("stackupLang") === "zh") lang = "zh";  // shared with stackup.html
+    } catch (e) {}
+
+    // t = "translate": looks up a key in the current language.
+    function t(key, ...args) {
+      const entry = TEXT[lang][key];
+      return typeof entry === "function" ? entry(...args) : entry;
+    }
+
+    function toggleLanguage() {
+      lang = lang === "en" ? "zh" : "en";
+      try { localStorage.setItem("stackupLang", lang); } catch (e) {}
+      applyLanguage();
+    }
+
+    function applyLanguage() {
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.title = t("pageTitle");
+      document.getElementById("langButton").textContent = t("switchTo");
+      for (const el of document.querySelectorAll("[data-i18n]")) {
+        el.textContent = t(el.dataset.i18n);
+      }
+      document.getElementById("description").placeholder = t("descHint");
+      document.getElementById("storeNote").textContent = t(canStore ? "autoSaveOn" : "autoSaveOff");
+      render();          // the editors are built from text too
+      showMessages();
+      if (lastResults) renderResults();
+    }
+
+    // Makes text safe to put inside HTML (so a name like "<A>" can't break the page).
+    function esc(text) {
+      return String(text).replace(/[&<>"']/g, c =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    }
+
+    // =====================================================================
+    // THE MODEL: all the data the user enters
+    // =====================================================================
+    //
+    // model = {
+    //   items:  [ { id, name, type, parent, locate, features: [...] } ],
+    //   checks: [ { id, name, p, q, measure, min, max } ]
+    // }
+    // A feature: { id, name, kind, x, y, d, dTol, tolX, tolY, tp }
+    //   x, y   - nominal position in the assembly coordinate system
+    //   d, dTol - diameter Ø and its ± tolerance (holes and pins)
+    //   tolX, tolY - ± coordinate tolerances
+    //   tp     - ⌀ position tolerance
+
+    let model = null;
+    let nextId = 1;
+    let lastResults = null;   // the latest results, so they can be re-shown in another language
+    let messages = [];        // the latest errors / warnings
+    let patternForm = null;   // the "+ Add pattern" form that is open (null = none)
+
+    // Saving: cleanSnapshot is the model (as text) at the last template / open / save,
+    // so we can tell whether there are unsaved changes. null = "assume unsaved".
+    let cleanSnapshot = null;
+    const STORE_KEY = "assemblyProject";
+    let canStore = false;     // can this browser keep data for us?
+    try {
+      localStorage.setItem("assemblyTest", "1");
+      localStorage.removeItem("assemblyTest");
+      canStore = true;
+    } catch (e) {}
+
+    // Simple view (false) hides the ±Ø and ⌀ Position columns. Remembered per browser.
+    let fullView = false;
+    try { fullView = localStorage.getItem("assemblyFullView") === "1"; } catch (e) {}
+
+    function uid(prefix) { return prefix + (nextId++); }
+
+    function newFeature(name, kind, x, y, d, dTol, tolX, tolY, tp) {
+      return { id: uid("f"), name, kind, x, y, d, dTol, tolX, tolY, tp };
+    }
+
+    function newItem(name, type, parent) {
+      return {
+        id: uid("i"), name, type, parent,
+        locate: { method: "twoPin", mode: "free", p1: "", h1: "", p2: "", h2: "",   // two pins
+                  pivot: "", tx: 0, ty: 0, tt: 0,                                  // known tolerance
+                  n1: "-y", n2: "-x", s1p: "", s1h: "", s2p: "", s2h: "", s3p: "", s3h: "",  // edge stops
+                  pc: "", hc: "", pw: 50, ph: 30, cx: 0.2, cy: 0.2, cxTol: 0, cyTol: 0 },    // pocket
+        features: []
+      };
+    }
+
+    function itemById(id) { return model.items.find(item => item.id === id); }
+
+    function findFeature(fid) {
+      for (const item of model.items) {
+        const f = item.features.find(f => f.id === fid);
+        if (f) return { f, item };
+      }
+      return null;
+    }
+
+    function toNumber(text) {
+      const n = Number(text);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    // ----- Editing functions, called by the inputs on the page -----
+
+    function addItem() {
+      const root = model.items.find(item => item.parent === null);
+      model.items.push(newItem(t("newItemName") + " " + (model.items.length + 1), "part",
+                               root ? root.id : null));
+      render();
+    }
+
+    function removeItem(id) {
+      if (model.items.some(item => item.parent === id)) {
+        setMessages([{ type: "error", key: "errHasChildren", args: [itemById(id).name] }]);
+        return;
+      }
+      model.items = model.items.filter(item => item.id !== id);
+      render();
+    }
+
+    function setItem(id, field, value) {
+      itemById(id)[field] = value;
+      render();
+    }
+
+    function setParent(id, parentId) {
+      const item = itemById(id);
+      item.parent = parentId || null;
+      // Features on the old parent (pins, stops, pocket) don't apply any more.
+      for (const field of ["p1", "p2", "s1p", "s2p", "s3p", "pc"]) item.locate[field] = "";
+      render();
+    }
+
+    function setLocate(id, field, value, isNumber) {
+      const item = itemById(id);
+      item.locate[field] = isNumber ? toNumber(value) : value;
+      if (field === "method" && value === "known" && !item.locate.pivot && item.features.length) {
+        item.locate.pivot = item.features[0].id;
+      }
+      if (!isNumber) render();
+      else updateStructure();
+    }
+
+    function addFeature(itemId) {
+      const item = itemById(itemId);
+      item.features.push(newFeature(t("newFeatureName") + (item.features.length + 1), "point",
+                                    0, 0, 0, 0, 0, 0, 0));
+      render();
+    }
+
+    function removeFeature(fid) {
+      const { item } = findFeature(fid);
+      item.features = item.features.filter(f => f.id !== fid);
+      render();
+    }
+
+    function setFeature(fid, field, value, isNumber) {
+      findFeature(fid).f[field] = isNumber ? toNumber(value) : value;
+      if (!isNumber) render();   // names and kinds appear in other dropdowns
+      else updateStructure();    // (a full redraw here would lose the cursor position)
+    }
+
+    function addCheck() {
+      model.checks.push({ id: uid("c"), name: t("newCheckName") + " " + (model.checks.length + 1),
+                          p: "", q: "", measure: "dx", min: null, max: null });
+      render();
+    }
+
+    function removeCheck(id) {
+      model.checks = model.checks.filter(c => c.id !== id);
+      render();
+    }
+
+    // kind: "text" (name), "select" (dropdowns) or "spec" (number, empty = no limit)
+    function setCheck(id, field, value, kind) {
+      const check = model.checks.find(c => c.id === id);
+      // Switching to or from Fit: From/To become items instead of features, and the
+      // spec becomes "margin ≥ 0".
+      if (field === "measure" && (value === "fit") !== (check.measure === "fit")) {
+        check.p = "";
+        check.q = "";
+        check.min = value === "fit" ? 0 : null;
+        check.max = null;
+      }
+      if (kind === "spec") check[field] = value === "" ? null : toNumber(value);
+      else check[field] = value;
+      if (kind === "select") render();
+      else updateStructure();
+    }
+
+    // =====================================================================
+    // SAVING AND OPENING PROJECTS
+    // =====================================================================
+
+    function isDirty() {
+      return cleanSnapshot === null || JSON.stringify(model) !== cleanSnapshot;
+    }
+
+    // Everything that goes into a project file.
+    function projectData() {
+      return {
+        app: "assembly-tolerance",
+        version: 1,
+        savedAt: new Date().toISOString(),
+        settings: {
+          runs: Number(document.getElementById("runs").value),
+          sigmaLevel: Number(document.getElementById("sigmaLevel").value)
+        },
+        model
+      };
+    }
+
+    // Automatic save in this browser. Called after every change.
+    function saveToBrowser() {
+      if (!canStore || !model) return;
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(Object.assign(projectData(), { clean: !isDirty() })));
+      } catch (e) {}
+    }
+
+    function fileName() {
+      // Remove characters a file name can't have, then tidy the spaces.
+      const base = (model.name || "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+      return (base || "assembly-project") + ".json";
+    }
+
+    // "Save project file". On a phone it opens the share sheet ("Save to Files", or send
+    // it by chat or e-mail); on a computer the browser downloads the .json file.
+    async function saveProjectFile() {
+      const text = JSON.stringify(projectData(), null, 2);
+      const name = fileName();
+      const file = new File([text], name, { type: "application/json" });
+      const isPhone = window.matchMedia("(pointer: coarse)").matches;
+      if (isPhone && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          markSaved("sharedFile", name);
+        } catch (e) {
+          if (e.name !== "AbortError") downloadFile(text, name);   // sharing failed: download instead
+        }
+        return;
+      }
+      downloadFile(text, name);
+    }
+
+    function downloadFile(text, name) {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      markSaved("savedFile", name);
+    }
+
+    function markSaved(messageKey, name) {
+      cleanSnapshot = JSON.stringify(model);
+      saveToBrowser();
+      setMessages([{ type: "info", key: messageKey, args: [name] }]);
+    }
+
+    // "Open project file": read the chosen file and replace the current setup.
+    function openProjectFile(input) {
+      const file = input.files[0];
+      input.value = "";   // so the same file can be chosen again later
+      if (!file) return;
+      if (isDirty() && !confirm(t("confirmReplace"))) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          applyProject(JSON.parse(reader.result));
+          afterReplace();
+          saveToBrowser();
+          setMessages([{ type: "info", key: "openedFile", args: [file.name] }]);
+        } catch (e) {
+          setMessages([{ type: "error", key: "badFile", args: [file.name] }]);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // Puts a project (from a file or the browser) into the page. Throws if it isn't one.
+    function applyProject(data) {
+      if (!data || data.app !== "assembly-tolerance" || !data.model ||
+          !Array.isArray(data.model.items) || !Array.isArray(data.model.checks)) {
+        throw new Error("not a project file");
+      }
+      model = normalizeModel(data.model);
+      const s = data.settings || {};
+      if (Number.isInteger(s.runs)) document.getElementById("runs").value = s.runs;
+      if (s.sigmaLevel === 3 || s.sigmaLevel === 6) document.getElementById("sigmaLevel").value = s.sigmaLevel;
+    }
+
+    // Checks and tidies a loaded model: fills in anything missing (for example from an
+    // older file), turns numbers into numbers, and makes sure every id looks like ours
+    // ("i3", "f12", "c2") so nothing strange can get into the page.
+    function normalizeModel(raw) {
+      const okId = (id, prefix) => {
+        if (typeof id !== "string" || !new RegExp("^" + prefix + "\\d+$").test(id)) throw new Error("bad id");
+        return id;
+      };
+      const numbers = (obj, keys) => { for (const k of keys) obj[k] = toNumber(obj[k]); return obj; };
+      const text = v => String(v ?? "");
+      const blank = newItem("", "part", null).locate;
+
+      const items = raw.items.map(it => {
+        const L = numbers(Object.assign({}, blank, it.locate),
+                          ["tx", "ty", "tt", "pw", "ph", "cx", "cy", "cxTol", "cyTol"]);
+        for (const k of ["p1", "h1", "p2", "h2", "pivot", "s1p", "s1h", "s2p", "s2h", "s3p", "s3h", "pc", "hc"]) {
+          L[k] = text(L[k]);
+        }
+        if (!["twoPin", "pattern", "stops", "pocket", "known"].includes(L.method)) L.method = "twoPin";
+        if (!["free", "tight"].includes(L.mode)) L.mode = "free";
+        if (!["+x", "-x", "+y", "-y"].includes(L.n1)) L.n1 = "-y";
+        if (!["+x", "-x", "+y", "-y"].includes(L.n2)) L.n2 = "-x";
+        return {
+          id: okId(it.id, "i"),
+          name: text(it.name),
+          type: it.type === "fixture" ? "fixture" : "part",
+          parent: it.parent ? okId(it.parent, "i") : null,
+          locate: L,
+          features: (it.features || []).map(f => numbers({
+            id: okId(f.id, "f"),
+            name: text(f.name),
+            kind: ["hole", "pin", "point"].includes(f.kind) ? f.kind : "point",
+            x: f.x, y: f.y, d: f.d, dTol: f.dTol, tolX: f.tolX, tolY: f.tolY, tp: f.tp
+          }, ["x", "y", "d", "dTol", "tolX", "tolY", "tp"]))
+        };
+      });
+      const spec = v => v === null || v === undefined || v === "" ? null : toNumber(v);
+      const checks = raw.checks.map(c => ({
+        id: okId(c.id, "c"),
+        name: text(c.name),
+        p: text(c.p),
+        q: text(c.q),
+        measure: ["dx", "dy", "radial", "fit"].includes(c.measure) ? c.measure : "dx",
+        min: spec(c.min),
+        max: spec(c.max)
+      }));
+
+      // New ids must not clash with the loaded ones.
+      let biggest = 0;
+      for (const item of items) {
+        biggest = Math.max(biggest, Number(item.id.slice(1)), ...item.features.map(f => Number(f.id.slice(1))));
+      }
+      for (const c of checks) biggest = Math.max(biggest, Number(c.id.slice(1)));
+      nextId = biggest + 1;
+
+      return { name: text(raw.name), description: text(raw.description), items, checks };
+    }
+
+    // "New empty project": just one base fixture.
+    function newProject() {
+      if (isDirty() && !confirm(t("confirmReplace"))) return;
+      nextId = 1;
+      model = { name: "", description: "", items: [newItem(t("newFixture"), "fixture", null)], checks: [] };
+      afterReplace();
+    }
+
+    // After the whole setup is replaced: clear old results and remember it as "saved".
+    function afterReplace() {
+      patternForm = null;
+      lastResults = null;
+      document.getElementById("results").innerHTML = "";
+      document.getElementById("legend").style.display = "none";
+      setMessages([]);
+      cleanSnapshot = JSON.stringify(model);
+      render();
+    }
+
+    function toggleView() {
+      fullView = !fullView;
+      try { localStorage.setItem("assemblyFullView", fullView ? "1" : "0"); } catch (e) {}
+      render();
+    }
+
+    // ----- "+ Add pattern": create a whole row or rectangle of holes/pins at once -----
+
+    function openPatternForm(itemId) {
+      patternForm = {
+        itemId, shape: "rect", kind: "hole", prefix: "H-", d: 3.05, tolX: 0, tolY: 0,
+        x: 0, y: 0, w: 100, h: 60, nx: 3, px: 20, ny: 2, py: 20,   // rectangle
+        dir: "x", pitch: 10, count: 5,                              // single row
+        mate: itemById(itemId).parent !== null,                     // matching features on the parent
+        matePrefix: "P-", mateD: 3, mateTolX: 0, mateTolY: 0,
+        setMethod: true
+      };
+      render();
+    }
+
+    function closePatternForm() {
+      patternForm = null;
+      render();
+    }
+
+    function setPatternField(field, value, isNumber) {
+      patternForm[field] = isNumber ? toNumber(value) : value;
+      if (!isNumber) render();   // shape, kind and checkboxes change what the form shows
+    }
+
+    // The positions of a pattern, each with a suffix for its name:
+    //   rectangle: T1, T2 … (top row), B… (bottom), L… (left), R… (right)
+    //   single row: 1, 2, 3 …
+    function patternPoints(s) {
+      const round = v => Math.round(v * 1e6) / 1e6;   // avoids numbers like 0.30000000000000004
+      const pts = [];
+      const add = (suffix, x, y) => pts.push({ suffix, x: round(x), y: round(y) });
+      if (s.shape === "row") {
+        for (let i = 0; i < s.count; i++) {
+          add(String(i + 1), s.x + (s.dir === "x" ? i * s.pitch : 0), s.y + (s.dir === "y" ? i * s.pitch : 0));
+        }
+        return pts;
+      }
+      // Each row is centered on the rectangle's center.
+      const offset = (i, n, pitch) => (i - (n - 1) / 2) * pitch;
+      for (let i = 0; i < s.nx; i++) add("T" + (i + 1), s.x + offset(i, s.nx, s.px), s.y + s.h / 2);
+      for (let i = 0; i < s.nx; i++) add("B" + (i + 1), s.x + offset(i, s.nx, s.px), s.y - s.h / 2);
+      for (let i = 0; i < s.ny; i++) add("L" + (i + 1), s.x - s.w / 2, s.y + offset(i, s.ny, s.py));
+      for (let i = 0; i < s.ny; i++) add("R" + (i + 1), s.x + s.w / 2, s.y + offset(i, s.ny, s.py));
+      return pts;
+    }
+
+    function createPattern() {
+      const s = patternForm;
+      const whole = n => Number.isInteger(n) && n >= 0 && n <= 200;
+      const ok = s.shape === "row" ? whole(s.count) : whole(s.nx) && whole(s.ny);
+      const pts = ok ? patternPoints(s) : [];
+      if (pts.length === 0) {
+        setMessages([{ type: "error", key: "errPatternForm", args: [] }]);
+        return;
+      }
+      const item = itemById(s.itemId);
+      for (const p of pts) {
+        item.features.push(newFeature(s.prefix + p.suffix, s.kind, p.x, p.y, s.d, 0, s.tolX, s.tolY, 0));
+      }
+      const withMate = s.mate && item.parent !== null;
+      if (withMate) {
+        const parent = itemById(item.parent);
+        const mateKind = s.kind === "hole" ? "pin" : "hole";
+        for (const p of pts) {
+          parent.features.push(newFeature(s.matePrefix + p.suffix, mateKind, p.x, p.y,
+                                          s.mateD, 0, s.mateTolX, s.mateTolY, 0));
+        }
+        if (s.setMethod) {
+          if (item.locate.method !== "pattern") item.locate.mode = "tight";
+          item.locate.method = "pattern";
+        }
+      }
+      patternForm = null;
+      setMessages([{ type: "info", key: "patternMade", args: [pts.length * (withMate ? 2 : 1)] }]);
+      render();
+    }
+
+    // Pin pattern pairing: each hole (or pin) on the item is paired with a pin (or hole)
+    // on the parent at exactly the same nominal X / Y.
+    function patternPairs(item, parent) {
+      if (!parent) return [];
+      const pairs = [];
+      for (const h of item.features) {
+        if (h.kind === "point") continue;
+        const p = parent.features.find(p => p.kind !== "point" && p.kind !== h.kind &&
+                                            Math.hypot(p.x - h.x, p.y - h.y) < 1e-6);
+        if (p) pairs.push({ p: p.id, h: h.id });
+      }
+      return pairs;
+    }
+
+    // Fit check pairing: each hole/pin on the moving item (check.p) is paired with a
+    // pin/hole at the same nominal X / Y on the target item (check.q), or on any other
+    // item except the moving item's parent (check.q = "*").
+    function fitPairs(check) {
+      const moving = itemById(check.p);
+      if (!moving) return [];
+      const targets = check.q === "*"
+        ? model.items.filter(i => i.id !== moving.id && i.id !== moving.parent)
+        : [itemById(check.q)].filter(Boolean);
+      const pairs = [];
+      for (const fA of moving.features) {
+        if (fA.kind === "point") continue;
+        for (const target of targets) {
+          const fB = target.features.find(f => f.kind !== "point" && f.kind !== fA.kind &&
+                                               Math.hypot(f.x - fA.x, f.y - fA.y) < 1e-6);
+          if (fB) { pairs.push({ fA, fB, itemA: moving, itemB: target }); break; }
+        }
+      }
+      return pairs;
+    }
+
+    // =====================================================================
+    // DRAWING THE EDITOR (items, features, checks)
+    // =====================================================================
+
+    // Builds <option> tags. list = [{ value, label }]
+    function options(list, selected) {
+      return list.map(o =>
+        `<option value="${esc(o.value)}"${o.value === selected ? " selected" : ""}>${esc(o.label)}</option>`
+      ).join("");
+    }
+
+    function featureOptions(item, selected) {
+      const list = [{ value: "", label: t("choose") }];
+      if (item) for (const f of item.features) list.push({ value: f.id, label: f.name });
+      return options(list, selected);
+    }
+
+    // All features of all items, grouped by item (for the checks table).
+    function allFeatureOptions(selected) {
+      return options([{ value: "", label: t("choose") }], selected) +
+        model.items.map(item =>
+          `<optgroup label="${esc(item.name)}">` +
+          options(item.features.map(f => ({ value: f.id, label: f.name })), selected) +
+          `</optgroup>`
+        ).join("");
+    }
+
+    // Items for a Fit check: the moving item, and what it fits onto.
+    function itemOptions(selected, withAll) {
+      const list = [{ value: "", label: t("choose") }];
+      if (withAll) list.push({ value: "*", label: t("allOthers") });
+      for (const item of model.items) list.push({ value: item.id, label: item.name });
+      return options(list, selected);
+    }
+
+    // Items in tree order (parents before children), with their depth for indenting.
+    function treeOrder() {
+      const out = [];
+      const seen = new Set();
+      function visit(item, depth) {
+        if (seen.has(item.id)) return;
+        seen.add(item.id);
+        out.push({ item, depth });
+        model.items.filter(c => c.parent === item.id).forEach(c => visit(c, depth + 1));
+      }
+      model.items.filter(item => item.parent === null).forEach(root => visit(root, 0));
+      model.items.forEach(item => visit(item, 0));   // anything left over (a broken chain)
+      return out;
+    }
+
+    // All items below this one in the tree (an item can't sit on its own child).
+    function descendants(id) {
+      const result = new Set();
+      const walk = pid => model.items.filter(c => c.parent === pid).forEach(c => {
+        if (!result.has(c.id)) { result.add(c.id); walk(c.id); }
+      });
+      walk(id);
+      return result;
+    }
+
+    function render() {
+      document.getElementById("viewButton").textContent = t(fullView ? "viewSimple" : "viewFull");
+      document.getElementById("projectName").value = model.name || "";
+      const description = document.getElementById("description");
+      description.value = model.description || "";
+      fitHeight(description);
+      updateStructure();
+      document.getElementById("items").innerHTML =
+        treeOrder().map(({ item, depth }) => itemCard(item, depth)).join("");
+      document.getElementById("checks").innerHTML = checksTable();
+    }
+
+    // Makes a text box exactly as tall as its text.
+    function fitHeight(box) {
+      box.style.height = "auto";
+      box.style.height = box.scrollHeight + 4 + "px";
+    }
+
+    // Every edit ends up here (directly or through render), so this is also where the
+    // automatic browser save happens.
+    function updateStructure() {
+      document.getElementById("structure").textContent = structureText();
+      saveToBrowser();
+    }
+
+    // The "Assembly structure" overview, as text with tree lines, e.g.
+    //   Carrier (fixture)
+    //    ├─ Part A (part)  ← 2 pins, free (PA1/HA1, PA2/HA2)
+    //    └─ Align block (fixture)  ← 2 pins, free (...)
+    //        └─ Part B (part)  ← 2 pins, free (...)
+    function structureText() {
+      const lines = [];
+      const fname = id => { const r = findFeature(id); return r ? r.f.name : "?"; };
+      const mode = L => t(L.mode === "free" ? "modeFreeShort" : "modeTightShort");
+      const summary = item => {
+        const L = item.locate;
+        if (L.method === "known") return t("sumKnown", L.tx, L.ty, L.tt);
+        if (L.method === "pattern") return t("sumPattern", mode(L), patternPairs(item, itemById(item.parent)).length);
+        if (L.method === "stops") return t("sumStops", L.n1.toUpperCase(), L.n2.toUpperCase());
+        if (L.method === "pocket") return t("sumPocket", L.cx, L.cy);
+        return t("sumTwoPin", mode(L), `${fname(L.p1)}/${fname(L.h1)}, ${fname(L.p2)}/${fname(L.h2)}`);
+      };
+      const visit = (item, prefix, last, isRoot) => {
+        const type = t(item.type === "part" ? "typePartShort" : "typeFixtureShort");
+        lines.push((isRoot ? "" : prefix + (last ? "└─ " : "├─ ")) + `${item.name} (${type})` +
+                   (isRoot ? "" : "  ← " + summary(item)));
+        const kids = model.items.filter(c => c.parent === item.id);
+        const next = isRoot ? " " : prefix + (last ? "   " : "│  ");
+        kids.forEach((k, i) => visit(k, next, i === kids.length - 1, false));
+      };
+      model.items.filter(item => item.parent === null).forEach(root => visit(root, "", true, true));
+
+      if (model.checks.length) {
+        lines.push("", t("checksTitle") + ":");
+        const end = r => r ? `${r.item.name} / ${r.f.name}` : "?";
+        for (const c of model.checks) {
+          if (c.measure === "fit") {
+            const name = id => id === "*" ? t("allOthers") : (itemById(id) || { name: "?" }).name;
+            lines.push(`  • ${c.name}: ${name(c.p)} ⇄ ${name(c.q)} ` +
+                       `(${measureLabel(c.measure)}, ${t("fitPairsShort", fitPairs(c).length)})`);
+            continue;
+          }
+          lines.push(`  • ${c.name}: ${end(findFeature(c.p))} → ${end(findFeature(c.q))} (${measureLabel(c.measure)})`);
+        }
+      }
+      return lines.join("\n");
+    }
+
+    function itemCard(item, depth) {
+      const below = descendants(item.id);
+      const parentChoices = [{ value: "", label: t("noneRoot") }].concat(
+        model.items.filter(o => o.id !== item.id && !below.has(o.id))
+                   .map(o => ({ value: o.id, label: o.name })));
+      const id = item.id;
+
+      return `
+        <div class="item-card ${item.type}" style="margin-left:${Math.min(depth, 4) * 20}px">
+          <div class="row">
+            <label>${t("itemName")}
+              <input value="${esc(item.name)}" onchange="setItem('${id}','name',this.value)">
+            </label>
+            <label>${t("itemType")}
+              <select onchange="setItem('${id}','type',this.value)">
+                ${options([{ value: "fixture", label: t("typeFixture") },
+                           { value: "part", label: t("typePart") }], item.type)}
+              </select>
+            </label>
+            <label>${t("locatedOn")}
+              <select onchange="setParent('${id}',this.value)">
+                ${options(parentChoices, item.parent || "")}
+              </select>
+            </label>
+            <div><button class="small danger" onclick="removeItem('${id}')">${t("remove")}</button></div>
+          </div>
+          ${item.parent ? locateEditor(item) : `<p class="note">${t("rootNote")}</p>`}
+          <h3>${t("features")}</h3>
+          <div class="table-wrap">${featureTable(item)}</div>
+          ${patternForm && patternForm.itemId === id ? patternFormHtml(item) : ""}
+          <button class="small" onclick="addFeature('${id}')">${t("addFeature")}</button>
+          <button class="small" onclick="openPatternForm('${id}')">${t("addPattern")}</button>
+        </div>`;
+    }
+
+    function locateEditor(item) {
+      const L = item.locate;
+      const parent = itemById(item.parent);
+      const id = item.id;
+      const methodSelect = `
+        <label>${t("locateMethod")}
+          <select onchange="setLocate('${id}','method',this.value)">
+            ${options([{ value: "twoPin", label: t("methodTwoPin") },
+                       { value: "pattern", label: t("methodPattern") },
+                       { value: "stops", label: t("methodStops") },
+                       { value: "pocket", label: t("methodPocket") },
+                       { value: "known", label: t("methodKnown") }], L.method)}
+          </select>
+        </label>`;
+
+      if (L.method === "known") {
+        const num = (field, label) => `
+          <label>${label}
+            <input type="number" step="any" min="0" value="${L[field]}"
+                   onchange="setLocate('${id}','${field}',this.value,true)">
+          </label>`;
+        return `
+          <div class="locate">
+            <div class="row">${methodSelect}
+              <label>${t("pivot")}
+                <select onchange="setLocate('${id}','pivot',this.value)">${featureOptions(item, L.pivot)}</select>
+              </label>
+            </div>
+            <div class="row">${num("tx", t("knownX"))}${num("ty", t("knownY"))}${num("tt", t("knownT"))}</div>
+          </div>`;
+      }
+
+      // Edge stops: three rows (stop on the parent <-> edge point on this item).
+      if (L.method === "stops") {
+        const dirs = ["+x", "-x", "+y", "-y"].map(d => ({ value: d, label: d.toUpperCase() }));
+        const stop = (label, pf, hf) => `
+          <tr>
+            <td class="pair-label">${label}</td>
+            <td><select onchange="setLocate('${id}','${pf}',this.value)">${featureOptions(parent, L[pf])}</select></td>
+            <td><select onchange="setLocate('${id}','${hf}',this.value)">${featureOptions(item, L[hf])}</select></td>
+          </tr>`;
+        return `
+          <div class="locate">
+            <div class="row">${methodSelect}
+              <label>${t("pushPrimary")}
+                <select onchange="setLocate('${id}','n1',this.value)">${options(dirs, L.n1)}</select>
+              </label>
+              <label>${t("pushSecondary")}
+                <select onchange="setLocate('${id}','n2',this.value)">${options(dirs, L.n2)}</select>
+              </label>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <tr><th></th><th>${esc(t("onParentStop", parent ? parent.name : "?"))}</th>
+                    <th>${esc(t("onSelfEdge", item.name))}</th></tr>
+                ${stop(t("stop1"), "s1p", "s1h")}${stop(t("stop2"), "s2p", "s2h")}${stop(t("stop3"), "s3p", "s3h")}
+              </table>
+            </div>
+            <p class="note">${t("stopsNote")}</p>
+          </div>`;
+      }
+
+      // Pocket: the part floats inside the pocket's clearance.
+      if (L.method === "pocket") {
+        const num = (field, label) => `
+          <label>${label}
+            <input type="number" step="any" min="0" value="${L[field]}"
+                   onchange="setLocate('${id}','${field}',this.value,true)">
+          </label>`;
+        return `
+          <div class="locate">
+            <div class="row">${methodSelect}
+              <label>${t("pocketCenter")}
+                <select onchange="setLocate('${id}','pc',this.value)">${featureOptions(parent, L.pc)}</select>
+              </label>
+              <label>${t("partCenter")}
+                <select onchange="setLocate('${id}','hc',this.value)">${featureOptions(item, L.hc)}</select>
+              </label>
+            </div>
+            <div class="row">${num("pw", t("partSizeX"))}${num("ph", t("partSizeY"))}
+                             ${num("cx", t("clearX"))}${num("cy", t("clearY"))}
+                             ${num("cxTol", t("clearXTol"))}${num("cyTol", t("clearYTol"))}</div>
+            <p class="note">${t("pocketNote")}</p>
+          </div>`;
+      }
+
+      // Free / tight, used by both "two pins" and "pin pattern".
+      const modeSelect = `
+        <label>${t("floatMode")}
+          <select onchange="setLocate('${id}','mode',this.value)">
+            ${options([{ value: "free", label: t("modeFree") },
+                       { value: "tight", label: t("modeTight") }], L.mode)}
+          </select>
+        </label>`;
+
+      // Pin pattern: the pairs are found automatically, so we just list them.
+      if (L.method === "pattern") {
+        const pairs = patternPairs(item, parent);
+        const fname = fid => findFeature(fid).f.name;
+        const list = pairs.slice(0, 8).map(pr => `${fname(pr.h)}↔${fname(pr.p)}`).join(", ") +
+                     (pairs.length > 8 ? ", …" : "");
+        const text = pairs.length < 2 ? t("patternNeed", parent ? parent.name : "?")
+                                      : t("patternPairs", pairs.length, list);
+        return `
+          <div class="locate">
+            <div class="row">${methodSelect}${modeSelect}</div>
+            <p class="note ${pairs.length < 2 ? "error" : ""}">${esc(text)}</p>
+          </div>`;
+      }
+
+      // Two pins: one row per pin pair (feature on the parent <-> feature on this item)
+      const pair = (label, pf, hf) => `
+        <tr>
+          <td class="pair-label">${label}</td>
+          <td><select onchange="setLocate('${id}','${pf}',this.value)">${featureOptions(parent, L[pf])}</select></td>
+          <td><select onchange="setLocate('${id}','${hf}',this.value)">${featureOptions(item, L[hf])}</select></td>
+        </tr>`;
+      return `
+        <div class="locate">
+          <div class="row">${methodSelect}${modeSelect}</div>
+          <div class="table-wrap">
+            <table>
+              <tr><th></th><th>${esc(t("onParent", parent ? parent.name : "?"))}</th>
+                  <th>${esc(t("onSelf", item.name))}</th></tr>
+              ${pair(t("pair1"), "p1", "h1")}
+              ${pair(t("pair2"), "p2", "h2")}
+            </table>
+          </div>
+        </div>`;
+    }
+
+    // Simple view: Name, Kind, X, Y, Ø, ±X, ±Y.   Full view adds ±Ø and ⌀ Position.
+    function featureTable(item) {
+      const cols = fullView
+        ? ["colName", "colKind", "colX", "colY", "colD", "colDTol", "colTolX", "colTolY", "colTP"]
+        : ["colName", "colKind", "colX", "colY", "colD", "colTolX", "colTolY"];
+      const head = cols.map(k => `<th>${t(k)}</th>`).join("");
+      let anyHidden = false;
+      const rows = item.features.map(f => {
+        const isPoint = f.kind === "point";
+        const num = field => {
+          // Ø and ±Ø only matter for holes and pins, so they are greyed out for points.
+          const off = isPoint && (field === "d" || field === "dTol");
+          return `<td><input type="number" step="any" value="${off ? "" : f[field]}" ${off ? "disabled" : ""}
+                    onchange="setFeature('${f.id}','${field}',this.value,true)"></td>`;
+        };
+        // In the simple view, mark rows whose hidden columns still hold a value.
+        const hidden = !fullView && ((!isPoint && f.dTol) || f.tp);
+        if (hidden) anyHidden = true;
+        return `
+          <tr>
+            <td><input value="${esc(f.name)}" onchange="setFeature('${f.id}','name',this.value)"></td>
+            <td><select onchange="setFeature('${f.id}','kind',this.value)">
+              ${options([{ value: "hole", label: t("kindHole") }, { value: "pin", label: t("kindPin") },
+                         { value: "point", label: t("kindPoint") }], f.kind)}
+            </select></td>
+            ${num("x")}${num("y")}${num("d")}${fullView ? num("dTol") : ""}${num("tolX")}${num("tolY")}${fullView ? num("tp") : ""}
+            <td>${hidden ? `<span class="hidden-mark" title="${esc(t("hiddenMark"))}">●</span>` : ""}</td>
+            <td><button class="small danger" onclick="removeFeature('${f.id}')">×</button></td>
+          </tr>`;
+      }).join("");
+      return `<table><tr>${head}<th></th><th></th></tr>${rows}</table>` +
+             (anyHidden ? `<p class="note"><span class="hidden-mark">●</span> ${t("hiddenMark")}</p>` : "");
+    }
+
+    // The "+ Add pattern" form, shown inside the item's card.
+    function patternFormHtml(item) {
+      const s = patternForm;
+      const parent = itemById(item.parent);
+      const num = (field, label) => `
+        <label>${label}
+          <input type="number" step="any" value="${s[field]}" onchange="setPatternField('${field}',this.value,true)">
+        </label>`;
+      const text = (field, label) => `
+        <label>${label}
+          <input value="${esc(s[field])}" onchange="setPatternField('${field}',this.value)">
+        </label>`;
+      const shapeFields = s.shape === "row"
+        ? `${num("x", t("startX"))}${num("y", t("startY"))}
+           <label>${t("direction")}
+             <select onchange="setPatternField('dir',this.value)">
+               ${options([{ value: "x", label: "X" }, { value: "y", label: "Y" }], s.dir)}
+             </select>
+           </label>
+           ${num("pitch", t("pitch"))}${num("count", t("count"))}`
+        : `${num("x", t("centerX"))}${num("y", t("centerY"))}${num("w", t("rectW"))}${num("h", t("rectH"))}
+           ${num("nx", t("nx"))}${num("px", t("px"))}${num("ny", t("ny"))}${num("py", t("py"))}`;
+      const mateKind = t(s.kind === "hole" ? "kindPins" : "kindHoles");
+      const mateFields = !parent ? "" : `
+        <label class="checkbox">
+          <input type="checkbox" ${s.mate ? "checked" : ""} onchange="setPatternField('mate',this.checked)">
+          ${esc(t("mateOn", parent.name, mateKind))}
+        </label>
+        ${!s.mate ? "" : `
+          <div class="row">${text("matePrefix", t("patPrefix"))}${num("mateD", t("colD"))}
+                           ${num("mateTolX", t("colTolX"))}${num("mateTolY", t("colTolY"))}</div>
+          <label class="checkbox">
+            <input type="checkbox" ${s.setMethod ? "checked" : ""} onchange="setPatternField('setMethod',this.checked)">
+            ${t("setPattern")}
+          </label>`}`;
+      return `
+        <div class="pattern-form">
+          <div class="row">
+            <label>${t("patShape")}
+              <select onchange="setPatternField('shape',this.value)">
+                ${options([{ value: "rect", label: t("shapeRect") }, { value: "row", label: t("shapeRow") }], s.shape)}
+              </select>
+            </label>
+            <label>${t("colKind")}
+              <select onchange="setPatternField('kind',this.value)">
+                ${options([{ value: "hole", label: t("kindHole") }, { value: "pin", label: t("kindPin") }], s.kind)}
+              </select>
+            </label>
+            ${text("prefix", t("patPrefix"))}
+          </div>
+          <div class="row">${shapeFields}</div>
+          <div class="row">${num("d", t("colD"))}${num("tolX", t("colTolX"))}${num("tolY", t("colTolY"))}</div>
+          ${mateFields}
+          <button class="small" onclick="createPattern()">${t("create")}</button>
+          <button class="small danger" onclick="closePatternForm()">${t("cancel")}</button>
+        </div>`;
+    }
+
+    function checksTable() {
+      const head = ["colName", "colFrom", "colTo", "colMeasure", "colMin", "colMax"]
+        .map(k => `<th>${t(k)}</th>`).join("");
+      const rows = model.checks.map(c => `
+        <tr>
+          <td><input value="${esc(c.name)}" onchange="setCheck('${c.id}','name',this.value,'text')"></td>
+          <td><select onchange="setCheck('${c.id}','p',this.value,'select')">
+            ${c.measure === "fit" ? itemOptions(c.p, false) : allFeatureOptions(c.p)}</select></td>
+          <td><select onchange="setCheck('${c.id}','q',this.value,'select')">
+            ${c.measure === "fit" ? itemOptions(c.q, true) : allFeatureOptions(c.q)}</select></td>
+          <td><select onchange="setCheck('${c.id}','measure',this.value,'select')">
+            ${options([{ value: "dx", label: "ΔX" }, { value: "dy", label: "ΔY" },
+                       { value: "radial", label: t("radial") },
+                       { value: "fit", label: t("fitMeasure") }], c.measure)}
+          </select></td>
+          <td><input type="number" step="any" value="${c.min === null ? "" : c.min}"
+                     ${c.measure === "radial" ? "disabled" : ""}
+                     onchange="setCheck('${c.id}','min',this.value,'spec')"></td>
+          <td><input type="number" step="any" value="${c.max === null ? "" : c.max}"
+                     ${c.measure === "fit" ? "disabled" : ""}
+                     onchange="setCheck('${c.id}','max',this.value,'spec')"></td>
+          <td><button class="small danger" onclick="removeCheck('${c.id}')">×</button></td>
+        </tr>`).join("");
+      return `<div class="table-wrap"><table><tr>${head}<th></th></tr>${rows}</table></div>
+              <p class="note">${t("checksNote")}</p>`;
+    }
+
+    // ----- Messages (errors / warnings) -----
+
+    function setMessages(list) {
+      messages = list;
+      showMessages();
+    }
+
+    function showMessages() {
+      document.getElementById("messages").innerHTML = messages
+        .map(m => `<div class="${m.type}">${esc(t(m.key, ...m.args))}</div>`).join("");
+    }
+
+    // =====================================================================
+    // 2D GEOMETRY HELPERS
+    // =====================================================================
+    //
+    // A "transform" moves a point: first rotate it, then shift it.
+    //   new.x = c * x − s * y + tx
+    //   new.y = s * x + c * y + ty      (c = cos(angle), s = sin(angle))
+
+    const IDENTITY = { c: 1, s: 0, tx: 0, ty: 0 };   // a transform that moves nothing
+    const ZERO = { x: 0, y: 0 };
+
+    function apply(T, p) {
+      return { x: T.c * p.x - T.s * p.y + T.tx, y: T.s * p.x + T.c * p.y + T.ty };
+    }
+
+    // compose(A, B) = "do B first, then A".
+    function compose(A, B) {
+      return {
+        c: A.c * B.c - A.s * B.s,
+        s: A.s * B.c + A.c * B.s,
+        tx: A.c * B.tx - A.s * B.ty + A.tx,
+        ty: A.s * B.tx + A.c * B.ty + A.ty
+      };
+    }
+
+    // Rotates by `angle` around `from`, and moves `from` to `to`.
+    function rotateMove(angle, from, to) {
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return { c, s, tx: to.x - (c * from.x - s * from.y), ty: to.y - (s * from.x + c * from.y) };
+    }
+
+    // The angle (in radians) needed to turn direction u into direction v.
+    function angleBetween(u, v) {
+      return Math.atan2(u.x * v.y - u.y * v.x, u.x * v.x + u.y * v.y);
+    }
+
+    // =====================================================================
+    // THE ENGINE: one virtual assembly
+    // =====================================================================
+    //
+    // evaluate() builds ONE assembly and returns, for every check, how far the
+    // "To" feature moved relative to the "From" feature: { x, y }.
+    //
+    // All random numbers come from `rnd`. This trick lets the same code do two jobs:
+    //   - Monte Carlo:  rnd gives real random numbers           (makeRandomRnd)
+    //   - Sensitivity:  rnd gives 0, except one tiny test value (makeSenseRnd)
+
+    // Where feature f really is, in its own item's nominal position.
+    function featureActual(f, rnd) {
+      const pos = rnd.pos2(f.id + ":pos", f.tp / 2);    // ⌀ position: radius = tp / 2
+      return {
+        x: f.x + rnd.normal(f.id + ":x", f.tolX) + pos.x,
+        y: f.y + rnd.normal(f.id + ":y", f.tolY) + pos.y
+      };
+    }
+
+    // Clearance between a hole and a pin: hole Ø − pin Ø (never below 0).
+    function clearance(a, b, rnd) {
+      const hole = a.kind === "hole" ? a : b;
+      const pin = hole === a ? b : a;
+      const now = rnd.size(hole.id + ":d", hole.d, hole.dTol) - rnd.size(pin.id + ":d", pin.d, pin.dTol);
+      const max = (hole.d + hole.dTol) - (pin.d - pin.dTol);
+      return { now: Math.max(0, now), max: Math.max(0, max) };
+    }
+
+    // Two-pin locating. Returns the transform that moves the item from its
+    // nominal position to where it really sits on its parent.
+    function locateTwoPin(item, m, rnd) {
+      const L = item.locate;
+      const fP1 = m.feat[L.p1].f, fP2 = m.feat[L.p2].f;   // on the parent
+      const fH1 = m.feat[L.h1].f, fH2 = m.feat[L.h2].f;   // on this item
+      const P1 = featureActual(fP1, rnd), P2 = featureActual(fP2, rnd);
+      const H1 = featureActual(fH1, rnd), H2 = featureActual(fH2, rnd);
+
+      let float1 = ZERO;   // how far hole 1 sits from pin 1 (any direction)
+      let float2 = 0;      // how far hole 2 sits sideways from pin 2
+      if (L.mode === "free") {
+        const c1 = clearance(fP1, fH1, rnd);
+        const c2 = clearance(fP2, fH2, rnd);
+        float1 = rnd.disk(item.id + ":float1", c1.now / 2, c1.max / 2);
+        float2 = rnd.uniform(item.id + ":float2", c2.now / 2, c2.max / 2);
+      }
+
+      // Hole 1 lands on pin 1 (plus float).
+      const base = { x: P1.x + float1.x, y: P1.y + float1.y };
+      // Hole 2 lands on pin 2, shifted sideways (perpendicular to the pin line) by float2.
+      const line = { x: P2.x - P1.x, y: P2.y - P1.y };
+      const len = Math.hypot(line.x, line.y);
+      const side = { x: -line.y / len, y: line.x / len };
+      const target = { x: P2.x + side.x * float2 - base.x, y: P2.y + side.y * float2 - base.y };
+      // Turn the item so that hole1 → hole2 points at that target.
+      const angle = angleBetween({ x: H2.x - H1.x, y: H2.y - H1.y }, target);
+      return rotateMove(angle, H1, base);
+    }
+
+    // Known relative tolerance: random ±dX, ±dY, ±θ around a reference point.
+    function locateKnown(item, m, rnd) {
+      const L = item.locate;
+      const pivot = m.feat[L.pivot].f;
+      const dx = rnd.normal(item.id + ":kx", L.tx);
+      const dy = rnd.normal(item.id + ":ky", L.ty);
+      const angle = rnd.normal(item.id + ":kt", L.tt * Math.PI / 180);  // degrees → radians
+      return rotateMove(angle, pivot, { x: pivot.x + dx, y: pivot.y + dy });
+    }
+
+    function centroid(points) {
+      let x = 0, y = 0;
+      for (const p of points) { x += p.x; y += p.y; }
+      return { x: x / points.length, y: y / points.length };
+    }
+
+    // Least-squares best fit: the turn + shift that brings all holes H as close as
+    // possible to their pins P at once. (Center on center, then the best angle.)
+    function bestFit(H, P) {
+      const hc = centroid(H), pc = centroid(P);
+      let cross = 0, dot = 0;
+      H.forEach((h, i) => {
+        const a = { x: h.x - hc.x, y: h.y - hc.y };
+        const b = { x: P[i].x - pc.x, y: P[i].y - pc.y };
+        cross += a.x * b.y - a.y * b.x;
+        dot += a.x * b.x + a.y * b.y;
+      });
+      return rotateMove(Math.atan2(cross, dot), hc, pc);
+    }
+
+    // Free pin pattern. After the best fit the part can still move a little: a shift
+    // (x, y) and a small turn t, as long as every hole stays within its clearance r[i]
+    // of its pin. floatRegion() describes all those allowed moves.
+    function floatRegion(placed, P, r, center) {
+      const e = placed.map((h, i) => ({ x: h.x - P[i].x, y: h.y - P[i].y }));  // left-over offsets
+      const rel = placed.map(h => ({ x: h.x - center.x, y: h.y - center.y }));
+      // A box that surely contains every allowed move: the shift is the average hole
+      // movement, and the turn is a distance-weighted average, so neither can be
+      // bigger than what the holes allow.
+      let dMax = 0, num = 0, den = 0;
+      e.forEach((ei, i) => {
+        const limit = r[i] + Math.hypot(ei.x, ei.y);
+        const dist = Math.hypot(rel[i].x, rel[i].y);
+        dMax = Math.max(dMax, limit);
+        num += dist * limit;
+        den += dist * dist;
+      });
+      const tMax = den > 0 ? num / den : 0;
+      // Does a move keep every hole within its clearance? (A small turn t moves a
+      // hole by t × its distance from the center, at right angles.)
+      const fits = mv => e.every((ei, i) => {
+        const mx = ei.x + mv.x - mv.t * rel[i].y;
+        const my = ei.y + mv.y + mv.t * rel[i].x;
+        return mx * mx + my * my <= r[i] * r[i];
+      });
+      // A random allowed move: try random moves in the box, keep the first that fits.
+      const sample = () => {
+        if (Math.min(...r) > 0) {
+          for (let tries = 0; tries < 1000; tries++) {
+            const mv = { x: (2 * Math.random() - 1) * dMax, y: (2 * Math.random() - 1) * dMax,
+                         t: (2 * Math.random() - 1) * tMax };
+            if (fits(mv)) return mv;
+          }
+        }
+        return { x: 0, y: 0, t: 0 };   // no room to move: the part stays at the best fit
+      };
+      return { fits, sample, dMax, tMax };
+    }
+
+    // Pin pattern locating: best fit through all pairs, plus a random float if free.
+    function locatePattern(item, m, rnd) {
+      const pairs = m.pairs[item.id];
+      const P = pairs.map(pr => featureActual(pr.fP, rnd));   // on the parent
+      const H = pairs.map(pr => featureActual(pr.fH, rnd));   // on this item
+      const best = bestFit(H, P);
+      if (item.locate.mode !== "free") return best;
+
+      const c = pairs.map(pr => clearance(pr.fP, pr.fH, rnd));
+      const placed = H.map(h => apply(best, h));
+      const center = centroid(P);
+      const float = rnd.float(item.id + ":float",
+        radii => floatRegion(placed, P, radii, center),
+        c.map(ci => ci.now / 2), c.map(ci => ci.max / 2));
+      const F = rotateMove(float.t, center, { x: center.x + float.x, y: center.y + float.y });
+      return compose(F, best);
+    }
+
+    // "+x" → (1, 0), "-y" → (0, −1), and so on.
+    function dirVec(d) {
+      return { "+x": { x: 1, y: 0 }, "-x": { x: -1, y: 0 }, "+y": { x: 0, y: 1 }, "-y": { x: 0, y: -1 } }[d];
+    }
+
+    // Where a stop really touches. The part is pushed in direction n, so the stop is
+    // ahead of it: a pin stop touches with its near side (center − n × radius).
+    function stopContact(f, actual, n, rnd) {
+      if (f.kind !== "pin") return actual;
+      const radius = f.d / 2 + rnd.normal(f.id + ":r", f.dTol / 2);
+      return { x: actual.x - n.x * radius, y: actual.y - n.y * radius };
+    }
+
+    // Solves 3 equations with 3 unknowns (Cramer's rule).
+    function solve3(A, b) {
+      const det = M => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1])
+                     - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0])
+                     + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+      const D = det(A);
+      return [0, 1, 2].map(col => det(A.map((row, i) => row.map((v, j) => j === col ? b[i] : v))) / D);
+    }
+
+    // Edge stops (2 + 1): find the small shift (dx, dy) and turn t that makes each edge
+    // point touch its stop. For each stop, along its push direction n:
+    //   n · (edge point + shift + turn effect − contact point) = 0
+    // Three stops give three equations for the three unknowns.
+    function locateStops(item, m, rnd) {
+      const L = item.locate;
+      const n1 = dirVec(L.n1), n2 = dirVec(L.n2);
+      const stops = [[L.s1p, L.s1h, n1], [L.s2p, L.s2h, n1], [L.s3p, L.s3h, n2]].map(([p, h, n]) => {
+        const fP = m.feat[p].f, fH = m.feat[h].f;
+        return { C: stopContact(fP, featureActual(fP, rnd), n, rnd), H: featureActual(fH, rnd), n };
+      });
+      const ref = stops[0].H;   // turn around the first edge point
+      // A small turn t moves a point by t × (−(y − ref.y), x − ref.x).
+      const A = stops.map(({ H, n }) => [n.x, n.y, -n.x * (H.y - ref.y) + n.y * (H.x - ref.x)]);
+      const b = stops.map(({ H, C, n }) => n.x * (C.x - H.x) + n.y * (C.y - H.y));
+      const [dx, dy, turn] = solve3(A, b);
+      return rotateMove(turn, ref, { x: ref.x + dx, y: ref.y + dy });
+    }
+
+    // Pocket: the allowed moves of a rectangle (half sizes a in X, b in Y) inside a pocket
+    // with total clearances c.x, c.y. A corner stays inside when
+    //   |shift x| + |turn| · b ≤ c.x / 2   and   |shift y| + |turn| · a ≤ c.y / 2.
+    function pocketRegion(c, a, b) {
+      const hx = c.x / 2, hy = c.y / 2;
+      const tMax = Math.min(hx / b, hy / a);
+      const fits = mv => Math.abs(mv.x) + Math.abs(mv.t) * b <= hx &&
+                         Math.abs(mv.y) + Math.abs(mv.t) * a <= hy;
+      const sample = () => {
+        if (hx > 0 && hy > 0) {
+          for (let tries = 0; tries < 1000; tries++) {
+            const mv = { x: (2 * Math.random() - 1) * hx, y: (2 * Math.random() - 1) * hy,
+                         t: (2 * Math.random() - 1) * tMax };
+            if (fits(mv)) return mv;
+          }
+        }
+        return { x: 0, y: 0, t: 0 };
+      };
+      return { fits, sample, dMax: Math.max(hx, hy), tMax };
+    }
+
+    function locatePocket(item, m, rnd) {
+      const L = item.locate;
+      const C = featureActual(m.feat[L.pc].f, rnd);   // pocket center, on the parent
+      const Q = featureActual(m.feat[L.hc].f, rnd);   // part center, on this item
+      const now = { x: Math.max(0, rnd.size(item.id + ":cx", L.cx, L.cxTol)),
+                    y: Math.max(0, rnd.size(item.id + ":cy", L.cy, L.cyTol)) };
+      const max = { x: L.cx + L.cxTol, y: L.cy + L.cyTol };
+      const float = rnd.float(item.id + ":float", c => pocketRegion(c, L.pw / 2, L.ph / 2), now, max);
+      return rotateMove(float.t, Q, { x: C.x + float.x, y: C.y + float.y });
+    }
+
+    function evaluate(m, rnd) {
+      // 1. Position every item, parents first. world[id] moves the item's nominal
+      //    points to where they really are in the finished assembly.
+      const world = {};
+      for (const item of m.order) {
+        if (item.parent === null) { world[item.id] = IDENTITY; continue; }
+        const method = item.locate.method;
+        const L = method === "known" ? locateKnown(item, m, rnd)
+                : method === "pattern" ? locatePattern(item, m, rnd)
+                : method === "stops" ? locateStops(item, m, rnd)
+                : method === "pocket" ? locatePocket(item, m, rnd)
+                : locateTwoPin(item, m, rnd);
+        world[item.id] = compose(world[item.parent], L);
+      }
+      // 2. Measure every check: real (Q − P) minus nominal (Q − P).
+      return m.checks.map(ch => {
+        // Fit: for every hole/pin pair, margin = clearance / 2 − how far apart the centers
+        // are. The smallest margin decides: below 0 means a pin hits its hole wall.
+        if (ch.measure === "fit") {
+          let fit = Infinity;
+          for (const { fA, fB, itemA, itemB } of m.fits[ch.id]) {
+            const A = apply(world[itemA.id], featureActual(fA, rnd));
+            const B = apply(world[itemB.id], featureActual(fB, rnd));
+            const offset = Math.hypot(A.x - B.x - (fA.x - fB.x), A.y - B.y - (fA.y - fB.y));
+            fit = Math.min(fit, clearance(fA, fB, rnd).now / 2 - offset);
+          }
+          return { x: 0, y: 0, fit };
+        }
+        const p = m.feat[ch.p], q = m.feat[ch.q];
+        const P = apply(world[p.item.id], featureActual(p.f, rnd));
+        const Q = apply(world[q.item.id], featureActual(q.f, rnd));
+        return { x: (Q.x - P.x) - (q.f.x - p.f.x), y: (Q.y - P.y) - (q.f.y - p.f.y) };
+      });
+    }
+
+    // =====================================================================
+    // RANDOM NUMBERS
+    // =====================================================================
+
+    // Box-Muller: one bell-curve number with average 0 and σ = 1 (from stackup.html).
+    function randomNormal() {
+      let u = 0;
+      while (u === 0) u = Math.random();
+      const v = Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
+    // Real random numbers for Monte Carlo. k = 3 or 6 (tolerance = ±kσ).
+    // Each key is drawn once per assembly and then remembered ("memo"), so a pin
+    // used in two places has the same error in both.
+    function makeRandomRnd(k) {
+      const cache = new Map();
+      const memo = (key, make) => {
+        if (!cache.has(key)) cache.set(key, make());
+        return cache.get(key);
+      };
+      return {
+        newRun() { cache.clear(); },
+        normal(key, T) { return T ? memo(key, () => T / k * randomNormal()) : 0; },
+        pos2(key, R) {
+          return R ? memo(key, () => ({ x: R / k * randomNormal(), y: R / k * randomNormal() })) : ZERO;
+        },
+        disk(key, R) {   // a random point anywhere inside a circle of radius R
+          return R > 0 ? memo(key, () => {
+            const r = R * Math.sqrt(Math.random()), a = 2 * Math.PI * Math.random();
+            return { x: r * Math.cos(a), y: r * Math.sin(a) };
+          }) : ZERO;
+        },
+        uniform(key, R) { return R > 0 ? memo(key, () => (2 * Math.random() - 1) * R) : 0; },
+        size(key, nominal, T) { return T ? memo(key, () => nominal + T / k * randomNormal()) : nominal; },
+        // Free pin pattern or pocket: one random allowed move.
+        float(key, makeRegion, rNow) { return memo(key, () => makeRegion(rNow).sample()); }
+      };
+    }
+
+    // Sensitivity mode: every random value is 0, except `target`, which gets `h`.
+    // While doing this it also records every contributor in `meta`:
+    //   wc    - its worst-case size
+    //   sigma - its standard deviation
+    //   type  - "1d" (one number) or "2d" (a direction-free x/y pair)
+    function makeSenseRnd(target, h, meta, k) {
+      const register = (key, type, wc, sigma) => {
+        if (meta && wc > 0 && !meta.has(key)) meta.set(key, { type, wc, sigma });
+      };
+      const one = key => key === target ? h : 0;
+      const two = key => ({ x: one(key + ":x"), y: one(key + ":y") });
+      return {
+        normal(key, T) { register(key, "1d", T, T / k); return one(key); },
+        pos2(key, R) { register(key, "2d", R, R / k); return two(key); },
+        // Uniform in a circle: σ in each direction = R / 2. Worst case uses the largest clearance.
+        disk(key, R, Rmax) { register(key, "2d", Rmax, R / 2); return two(key); },
+        // Uniform from −R to +R: σ = R / √3.
+        uniform(key, R, Rmax) { register(key, "1d", Rmax, R / Math.sqrt(3)); return one(key); },
+        size(key, nominal) { return nominal; },
+        // Free pin pattern or pocket: the allowed moves have no simple formula, so we keep
+        // 2000 random allowed moves (at nominal and at largest clearance) to measure on.
+        float(key, makeRegion, rNow, rMax) {
+          if (meta && !meta.has(key)) {
+            const widest = makeRegion(rMax);
+            const many = region => Array.from({ length: 2000 }, () => region.sample());
+            meta.set(key, { type: "region", region: widest, samplesMax: many(widest),
+                            samplesNow: many(makeRegion(rNow)) });
+          }
+          return { x: one(key + ":x"), y: one(key + ":y"), t: one(key + ":t") };
+        }
+      };
+    }
+
+    // =====================================================================
+    // WORST CASE + RSS (from sensitivities)
+    // =====================================================================
+    //
+    // For each contributor: nudge it by a tiny amount h and see how much each
+    // check moves. That ratio is the "sensitivity" J. Then:
+    //   Worst case = Σ |J| × worst-case size
+    //   RSS        = k × √( Σ (J × σ)² )
+    // The largest value of g over all allowed pattern-float moves. Start from the best
+    // random sample, then keep taking small random steps that stay allowed and raise g.
+    function regionMax(region, samples, g) {
+      let best = { x: 0, y: 0, t: 0 };
+      for (const s of samples) if (g(s) > g(best)) best = s;
+      let step = 0.2;
+      for (let i = 0; i < 2000; i++) {
+        const mv = { x: best.x + step * region.dMax * (2 * Math.random() - 1),
+                     y: best.y + step * region.dMax * (2 * Math.random() - 1),
+                     t: best.t + step * region.tMax * (2 * Math.random() - 1) };
+        if (g(mv) > g(best) && region.fits(mv)) best = mv;
+        if (i % 250 === 249) step /= 2;
+      }
+      return g(best);   // the allowed moves are symmetric, so this is also the largest |g|
+    }
+
+    function sensitivity(m, k) {
+      const h = 1e-4;
+      const meta = new Map();
+      evaluate(m, makeSenseRnd(null, 0, meta, k));   // first pass: just list the contributors
+
+      // contrib[i] = list of { key, wx, wy, vx, vy }: each contributor's worst case (w)
+      // and variance (v) in X and Y for check i.
+      const contrib = m.checks.map(() => []);
+
+      for (const [key, info] of meta) {
+        const targets = info.type === "region" ? [key + ":x", key + ":y", key + ":t"]
+                      : info.type === "2d" ? [key + ":x", key + ":y"] : [key];
+        // J[t][i] = how check i moves when target t moves by 1
+        const J = targets.map(target => {
+          const plus = evaluate(m, makeSenseRnd(target, h, null, k));
+          const minus = evaluate(m, makeSenseRnd(target, -h, null, k));
+          return plus.map((p, i) => ({ x: (p.x - minus[i].x) / (2 * h), y: (p.y - minus[i].y) / (2 * h) }));
+        });
+        m.checks.forEach((ch, i) => {
+          const c = { key, wx: 0, wy: 0, vx: 0, vy: 0 };
+          for (const axis of ["x", "y"]) {
+            const Jv = J.map(j => j[i][axis]);
+            if (Jv.every(v => v === 0)) continue;   // this contributor doesn't move this check
+            let w, v;
+            if (info.type === "region") {
+              // g = how far this check moves for one allowed float move (x, y, t)
+              const g = s => Jv[0] * s.x + Jv[1] * s.y + Jv[2] * s.t;
+              w = regionMax(info.region, info.samplesMax, g);
+              v = info.samplesNow.reduce((sum, s) => sum + g(s) ** 2, 0) / info.samplesNow.length;
+            } else {
+              // For a 2D contributor the worst direction gives √(Jx² + Jy²).
+              const g = Math.hypot(...Jv);
+              w = info.wc * g;
+              v = (info.sigma * g) ** 2;
+            }
+            c["w" + axis] = w;
+            c["v" + axis] = v;
+          }
+          if (c.wx || c.wy) contrib[i].push(c);
+        });
+      }
+      // RSS is capped at the worst case: with few contributors (especially uniform
+      // pin float) ±kσ can reach past what is physically possible.
+      return m.checks.map((ch, i) => {
+        const sum = field => contrib[i].reduce((s, c) => s + c[field], 0);
+        const wcX = sum("wx"), wcY = sum("wy");
+        return {
+          wcX, wcY,
+          rssX: Math.min(wcX, k * Math.sqrt(sum("vx"))),
+          rssY: Math.min(wcY, k * Math.sqrt(sum("vy"))),
+          contrib: contrib[i]
+        };
+      });
+    }
+
+    // =====================================================================
+    // CHECKING THE INPUT, THEN CALCULATING
+    // =====================================================================
+
+    // Checks the model for mistakes and prepares it for the engine.
+    function buildModel() {
+      const errors = [], warnings = [];
+      const err = (key, ...args) => errors.push({ type: "error", key, args });
+      const warn = (key, ...args) => warnings.push({ type: "warning", key, args });
+
+      // Features by id, with the item they belong to.
+      const feat = {};
+      for (const item of model.items) for (const f of item.features) feat[f.id] = { f, item };
+
+      // Exactly one base item, and every item must chain back to it.
+      const roots = model.items.filter(item => item.parent === null);
+      if (roots.length !== 1) err("errRoot");
+      const order = [];
+      const visit = item => {
+        order.push(item);
+        model.items.filter(c => c.parent === item.id && !order.includes(c)).forEach(visit);
+      };
+      if (roots.length === 1) visit(roots[0]);
+      for (const item of model.items) {
+        if (roots.length === 1 && !order.includes(item)) err("errUnreached", item.name);
+      }
+
+      // Each item's locating features.
+      const pairsById = {};   // pin pattern pairs, per item
+      for (const item of model.items) {
+        if (item.parent === null) continue;
+        const L = item.locate;
+        const onParent = id => feat[id] && feat[id].item.id === item.parent;
+        const onSelf = id => feat[id] && feat[id].item.id === item.id;
+        if (L.method === "known") {
+          if (!onSelf(L.pivot)) err("errPivot", item.name);
+          continue;
+        }
+        if (L.method === "pattern") {
+          const pairs = patternPairs(item, itemById(item.parent));
+          if (pairs.length < 2) { err("errPattern", item.name); continue; }
+          pairsById[item.id] = pairs.map(pr => ({ fP: feat[pr.p].f, fH: feat[pr.h].f }));
+          const tooBig = pairsById[item.id].find(({ fP, fH }) =>
+            (fH.kind === "hole" ? fH.d - fP.d : fP.d - fH.d) < 0);
+          if (L.mode === "free" && tooBig) warn("warnInterference", item.name, tooBig.fH.name, tooBig.fP.name);
+          continue;
+        }
+        if (L.method === "stops") {
+          const rows = [[L.s1p, L.s1h], [L.s2p, L.s2h], [L.s3p, L.s3h]];
+          if (rows.some(([p, h]) => !onParent(p) || !onSelf(h))) { err("errStops", item.name); continue; }
+          const n1 = dirVec(L.n1), n2 = dirVec(L.n2);
+          if (n1.x * n2.x + n1.y * n2.y !== 0) { err("errStopsDir", item.name); continue; }
+          // Stops 1 and 2 must be apart along their edge, or they can't stop the turn.
+          const E1 = feat[L.s1h].f, E2 = feat[L.s2h].f;
+          if (Math.abs(-(E2.x - E1.x) * n1.y + (E2.y - E1.y) * n1.x) < 1e-6) {
+            err("errStopsSpread", item.name);
+            continue;
+          }
+          // At nominal size each edge point should touch its stop.
+          rows.forEach(([p, h], i) => {
+            const n = i < 2 ? n1 : n2, S = feat[p].f, E = feat[h].f;
+            const C = S.kind === "pin" ? { x: S.x - n.x * S.d / 2, y: S.y - n.y * S.d / 2 } : S;
+            if (Math.abs(n.x * (E.x - C.x) + n.y * (E.y - C.y)) > 1e-6) warn("warnStopNominal", item.name, E.name);
+          });
+          continue;
+        }
+        if (L.method === "pocket") {
+          if (!onParent(L.pc) || !onSelf(L.hc) || !(L.pw > 0) || !(L.ph > 0)) { err("errPocket", item.name); continue; }
+          const C = feat[L.pc].f, Q = feat[L.hc].f;
+          if (Math.hypot(C.x - Q.x, C.y - Q.y) > 1e-6) warn("warnPocketNominal", item.name);
+          continue;
+        }
+        if (!onParent(L.p1) || !onParent(L.p2) || !onSelf(L.h1) || !onSelf(L.h2) ||
+            L.p1 === L.p2 || L.h1 === L.h2) {
+          err("errPins", item.name);
+          continue;
+        }
+        const P1 = feat[L.p1].f, P2 = feat[L.p2].f, H1 = feat[L.h1].f, H2 = feat[L.h2].f;
+        if (Math.hypot(P2.x - P1.x, P2.y - P1.y) < 1e-9) err("errPinsSame", item.name);
+        if (L.mode === "free") {
+          for (const [a, b] of [[P1, H1], [P2, H2]]) {
+            if ([a.kind, b.kind].sort().join() !== "hole,pin") {
+              err("errFreeKinds", item.name, a.name, b.name);
+            } else {
+              const hole = a.kind === "hole" ? a : b, pin = hole === a ? b : a;
+              if (hole.d < pin.d) warn("warnInterference", item.name, a.name, b.name);
+            }
+          }
+        }
+        if (Math.hypot(P1.x - H1.x, P1.y - H1.y) > 1e-6 || Math.hypot(P2.x - H2.x, P2.y - H2.y) > 1e-6) {
+          warn("warnNominal", item.name);
+        }
+      }
+
+      // Checks.
+      if (model.checks.length === 0) err("errNoChecks");
+      const fits = {};   // fit check pairs, per check
+      for (const ch of model.checks) {
+        if (ch.measure === "fit") {
+          fits[ch.id] = fitPairs(ch);
+          if (!ch.q || fits[ch.id].length === 0) err("errFit", ch.name);
+          continue;
+        }
+        if (!feat[ch.p] || !feat[ch.q]) err("errCheckFeatures", ch.name);
+        if (ch.measure !== "radial" && ch.min !== null && ch.max !== null && ch.min > ch.max) {
+          err("errCheckSpec", ch.name);
+        }
+      }
+      return { errors, warnings, m: { order, feat, checks: model.checks, pairs: pairsById, fits } };
+    }
+
+    // The nominal value of a check (what it is with no errors at all).
+    function nominalValue(ch, m) {
+      if (ch.measure === "fit") {   // the smallest nominal clearance / 2
+        return Math.min(...m.fits[ch.id].map(({ fA, fB }) =>
+          (fA.kind === "hole" ? fA.d - fB.d : fB.d - fA.d) / 2));
+      }
+      const p = m.feat[ch.p].f, q = m.feat[ch.q].f;
+      if (ch.measure === "dx") return q.x - p.x;
+      if (ch.measure === "dy") return q.y - p.y;
+      return 0;   // radial offset
+    }
+
+    // Turns a check's movement { x, y } into the number we measure.
+    function measureValue(ch, d, nominal) {
+      if (ch.measure === "fit") return d.fit;
+      if (ch.measure === "dx") return nominal + d.x;
+      if (ch.measure === "dy") return nominal + d.y;
+      return Math.hypot(d.x, d.y);
+    }
+
+    // Returns every check's measured values, plus the raw (ΔX, ΔY) of radial checks
+    // for the scatter plot.
+    function monteCarlo(m, runs, k) {
+      const rnd = makeRandomRnd(k);
+      const nominals = m.checks.map(ch => nominalValue(ch, m));
+      const values = m.checks.map(() => new Float64Array(runs));
+      const xy = m.checks.map(ch => ch.measure === "radial"
+        ? { x: new Float64Array(runs), y: new Float64Array(runs) } : null);
+      for (let r = 0; r < runs; r++) {            // one loop = one virtual assembly
+        rnd.newRun();
+        const d = evaluate(m, rnd);
+        m.checks.forEach((ch, i) => {
+          values[i][r] = measureValue(ch, d[i], nominals[i]);
+          if (xy[i]) { xy[i].x[r] = d[i].x; xy[i].y[r] = d[i].y; }
+        });
+      }
+      return { values, xy };
+    }
+
+    // Runs when the "Calculate" button is clicked.
+    function calculate() {
+      const runs = Number(document.getElementById("runs").value);
+      if (!Number.isInteger(runs) || runs < 100 || runs > 1000000) {
+        setMessages([{ type: "error", key: "errRuns", args: [] }]);
+        return;
+      }
+      const k = Number(document.getElementById("sigmaLevel").value);
+      const { errors, warnings, m } = buildModel();
+      if (errors.length) {
+        setMessages(errors.concat(warnings));
+        return;
+      }
+      setMessages(warnings.concat([{ type: "info", key: "calculating", args: [] }]));
+
+      // setTimeout lets the page show "Calculating…" before the heavy work starts.
+      setTimeout(() => {
+        const sens = sensitivity(m, k);
+        const { values, xy } = monteCarlo(m, runs, k);
+        lastResults = {
+          runs, k,
+          checks: m.checks.map((ch, i) => {
+            // A radial offset only has a maximum; a fit margin only has a minimum.
+            const min = ch.measure === "radial" ? null : ch.min;
+            const max = ch.measure === "fit" ? null : ch.max;
+            const useY = ch.measure === "dy";
+            return {
+              name: ch.name, measure: ch.measure, min, max,
+              nominal: nominalValue(ch, m),
+              wc: useY ? sens[i].wcY : sens[i].wcX,
+              rss: useY ? sens[i].rssY : sens[i].rssX,
+              contrib: sens[i].contrib,
+              values: values[i], xy: xy[i],
+              stats: summarize(values[i], min, max)
+            };
+          })
+        };
+        setMessages(warnings);
+        renderResults();
+      }, 20);
+    }
+
+    // =====================================================================
+    // RESULTS (same formulas and layout as stackup.html)
+    // =====================================================================
+
+    function summarize(values, specMin, specMax) {
+      let sum = 0, min = Infinity, max = -Infinity, below = 0, above = 0;
+      for (const v of values) {
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+        if (specMin !== null && v < specMin) below++;
+        if (specMax !== null && v > specMax) above++;
+      }
+      const mean = sum / values.length;
+      let squares = 0;
+      for (const v of values) squares += (v - mean) * (v - mean);
+      const sigma = Math.sqrt(squares / (values.length - 1));
+      return { mean, sigma, min, max, below, above };
+    }
+
+    function formatResult(nominal, tol, specMin, specMax) {
+      const min = nominal - tol;
+      const max = nominal + tol;
+      let html = `
+        ${t("nominal")}: <b>${nominal.toFixed(4)}</b><br>
+        ${t("tolerance")}: <b>± ${tol.toFixed(4)}</b><br>
+        ${t("min")}: <b>${min.toFixed(4)}</b><br>
+        ${t("max")}: <b>${max.toFixed(4)}</b><br>`;
+      if (specMin === null && specMax === null) return html;
+      const pass = (specMin === null || min >= specMin) && (specMax === null || max <= specMax);
+      return html + `<span class="status ${pass ? "pass" : "fail"}">${pass ? "PASS" : "FAIL"}</span>`;
+    }
+
+    // notNormal: radial offsets and fit margins are not bell curves, so the σ-level
+    // lines are left out for them.
+    function formatMonteCarlo(s, runs, specMin, specMax, sigmaLevel, notNormal) {
+      const pct = n => (100 * n / runs).toFixed(2) + "%";
+      let html = `
+        ${t("mean")}: <b>${s.mean.toFixed(4)}</b><br>
+        ${t("stdDev")}: <b>${s.sigma.toFixed(4)}</b><br>
+        ±${sigmaLevel}σ: <b>± ${(sigmaLevel * s.sigma).toFixed(4)}</b><br>
+        ${t("smallest")}: <b>${s.min.toFixed(4)}</b><br>
+        ${t("largest")}: <b>${s.max.toFixed(4)}</b><br>`;
+      if (specMin === null && specMax === null) return html;
+
+      if (specMin !== null) html += `${t("belowMin")}: <b>${pct(s.below)}</b> (${s.below.toLocaleString()})<br>`;
+      if (specMax !== null) html += `${t("aboveMax")}: <b>${pct(s.above)}</b> (${s.above.toLocaleString()})<br>`;
+      const out = s.below + s.above;
+      html += `${t("outside")}: <b>${pct(out)}</b>
+               (${t("outOf", out.toLocaleString(), runs.toLocaleString())})<br>`;
+
+      // σ-level lines (extra information). Skipped for radial offset, which is
+      // not a bell curve, and when σ is 0.
+      if (!notNormal && s.sigma > 0) {
+        let z = Infinity;
+        if (specMin !== null) z = Math.min(z, (s.mean - specMin) / s.sigma);
+        if (specMax !== null) z = Math.min(z, (specMax - s.mean) / s.sigma);
+        const both = specMin !== null && specMax !== null;
+        const mark = z >= sigmaLevel ? "✔" : "✘";
+        html += `${t("specSigma", (both ? "±" : "") + z.toFixed(2), sigmaLevel)} <b>${mark}</b><br>`;
+        const needLo = (s.mean - sigmaLevel * s.sigma).toFixed(4);
+        const needHi = (s.mean + sigmaLevel * s.sigma).toFixed(4);
+        const range = both ? `${needLo} – ${needHi}` : specMin !== null ? `≤ ${needLo}` : `≥ ${needHi}`;
+        html += `${t("needed", sigmaLevel, range)}<br>`;
+      }
+
+      // PASS/FAIL uses the ppm rule, as in stackup.html.
+      const allowed = sigmaLevel === 6 ? 0.0000034 : 0.0027;
+      const ppm = (out / runs * 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 });
+      html += `${t("allowed")}: <b>${sigmaLevel === 6 ? "≤ 3.4 ppm" : "≤ 0.27%"}</b>
+               (${t("ppmNow", ppm)})<br>`;
+      const pass = out / runs <= allowed;
+      return html + `<span class="status ${pass ? "pass" : "fail"}">${pass ? "PASS" : "FAIL"}</span>`;
+    }
+
+    function measureLabel(measure) {
+      return measure === "dx" ? "ΔX" : measure === "dy" ? "ΔY" : measure === "fit" ? t("fitMeasure") : t("radial");
+    }
+
+    function renderResults() {
+      const r = lastResults;
+      document.getElementById("results").innerHTML = r.checks.map((c, i) => {
+        const radial = c.measure === "radial", fit = c.measure === "fit";
+        const statBox = tol => radial ? `<p class="note">${t("mcOnly")}</p>`
+                             : fit ? `<p class="note">${t("mcOnlyFit")}</p>`
+                             : formatResult(c.nominal, tol, c.min, c.max);
+        return `
+          <div class="result-card">
+            <h3>${esc(c.name)}<span class="tag">${measureLabel(c.measure)}</span></h3>
+            <p class="note">${t("nominalLine", c.nominal.toFixed(4))}${fit ? "<br>" + t("fitNote") : ""}</p>
+            <div class="results">
+              <div class="result-box"><h4>${t("worstCase")}</h4>${statBox(c.wc)}</div>
+              <div class="result-box"><h4>${t("rss")}</h4>${statBox(c.rss)}</div>
+              <div class="result-box"><h4>${t("monteCarlo")}</h4>
+                ${formatMonteCarlo(c.stats, r.runs, c.min, c.max, r.k, radial || fit)}</div>
+            </div>
+            <div class="chart-row">
+              <div class="chart-area">
+                <canvas id="hist${i}"></canvas>
+                <div class="tooltip"></div>
+              </div>
+              ${radial ? `<div class="scatter-area">
+                            <canvas id="scat${i}"></canvas>
+                            <p class="note">${t("scatterNote")}</p>
+                          </div>` : ""}
+            </div>
+            ${contributionHtml(c)}
+          </div>`;
+      }).join("");
+      document.getElementById("legend").style.display = "block";
+
+      r.checks.forEach((c, i) => attachTooltip(document.getElementById("hist" + i)));
+      drawAllCharts();
+    }
+
+    function drawAllCharts() {
+      lastResults.checks.forEach((c, i) => {
+        drawHistogram(document.getElementById("hist" + i), c.values, c.stats, c.min, c.max, c.nominal);
+        if (c.xy) drawScatter(document.getElementById("scat" + i), c.xy.x, c.xy.y, c.max);
+      });
+    }
+
+    // A readable name for a contributor key such as "f12:pos" or "i3:float1".
+    function contributorLabel(key) {
+      const [id, part] = key.split(":");
+      const word = TEXT[lang]["part_" + part] || part;
+      const feat = findFeature(id);
+      if (feat) return `${feat.item.name} / ${feat.f.name} ${word}`;
+      const item = itemById(id);
+      return `${item ? item.name : "?"} · ${word}`;
+    }
+
+    // Bars showing each contributor's share of the RSS variation (top 8 + "Other").
+    function contributionHtml(c) {
+      if (c.measure === "fit" || !c.contrib.length) return "";
+      const v = x => c.measure === "dx" ? x.vx : c.measure === "dy" ? x.vy : x.vx + x.vy;
+      const total = c.contrib.reduce((s, x) => s + v(x), 0);
+      if (!(total > 0)) return "";
+      const sorted = c.contrib.map(x => ({ key: x.key, share: v(x) / total }))
+                              .sort((a, b) => b.share - a.share);
+      const top = sorted.slice(0, 8);
+      const rest = sorted.slice(8).reduce((s, x) => s + x.share, 0);
+      if (rest > 0) top.push({ key: null, share: rest });
+      return `
+        <div class="contrib">
+          <h4>${t("contribTitle")}</h4>
+          ${top.map(x => `
+            <div class="contrib-row">
+              <span>${esc(x.key ? contributorLabel(x.key) : t("other"))}</span>
+              <span class="contrib-bar"><span style="width:${(x.share * 100).toFixed(1)}%"></span></span>
+              <span class="contrib-pct">${(x.share * 100).toFixed(1)}%</span>
+            </div>`).join("")}
+          <p class="note">${t("contribNote")}</p>
+        </div>`;
+    }
+
+    // Scatter plot: where the "To" feature lands relative to the "From" feature (ΔX, ΔY).
+    function drawScatter(canvas, xs, ys, radius) {
+      const ctx = canvas.getContext("2d");
+      const size = Math.min(canvas.parentElement.clientWidth, 300);
+      const scale = window.devicePixelRatio || 1;
+      canvas.width = size * scale;
+      canvas.height = size * scale;
+      canvas.style.width = size + "px";
+      canvas.style.height = size + "px";
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+
+      // Range: the farthest point or the tolerance circle, whichever is bigger, + 10%.
+      let ext = radius || 0;
+      for (let i = 0; i < xs.length; i++) ext = Math.max(ext, Math.abs(xs[i]), Math.abs(ys[i]));
+      ext = (ext || 1) * 1.1;
+      const pad = 24, half = (size - 2 * pad) / 2, mid = size / 2;
+      const px = v => mid + v / ext * half;
+      const py = v => mid - v / ext * half;   // canvas y grows downward, so flip it
+
+      // Cross-hair axes, labelled at their ends.
+      ctx.strokeStyle = "#e5e5e5";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad, mid); ctx.lineTo(size - pad, mid);
+      ctx.moveTo(mid, pad); ctx.lineTo(mid, size - pad);
+      ctx.stroke();
+      ctx.fillStyle = "#666";
+      ctx.font = "11px Arial";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("ΔX → " + ext.toFixed(3), size - 2, size - 2);   // corner, clear of the circle
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText("ΔY ↑ " + ext.toFixed(3), mid + 4, 4);
+
+      // Dots: at most about 4000 so the chart stays fast. Red outside the circle.
+      const step = Math.max(1, Math.floor(xs.length / 4000));
+      for (let i = 0; i < xs.length; i += step) {
+        const outside = radius !== null && Math.hypot(xs[i], ys[i]) > radius;
+        ctx.fillStyle = outside ? "rgba(192, 57, 43, 0.8)" : "rgba(31, 111, 235, 0.35)";
+        ctx.fillRect(px(xs[i]) - 1, py(ys[i]) - 1, 2, 2);
+      }
+
+      // The tolerance circle = Max (USL).
+      if (radius !== null) {
+        ctx.strokeStyle = RED;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.arc(mid, mid, radius / ext * half, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // =====================================================================
+    // HISTOGRAM (from stackup.html, now drawing on any canvas)
+    // =====================================================================
+
+    const BLUE = "#1f6feb";
+    const RED = "#c0392b";
+    const BINS = 50;
+
+    function drawHistogram(canvas, values, stats, specMin, specMax, nominal) {
+      const ctx = canvas.getContext("2d");
+      const width = canvas.parentElement.clientWidth;
+      const height = 260;
+      const scale = window.devicePixelRatio || 1;
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      // 1. x-axis range: data, nominal and spec lines, with 5% padding.
+      let lo = Math.min(stats.min, nominal);
+      let hi = Math.max(stats.max, nominal);
+      if (specMin !== null) lo = Math.min(lo, specMin);
+      if (specMax !== null) hi = Math.max(hi, specMax);
+      if (hi === lo) { lo -= 1; hi += 1; }
+      const pad = (hi - lo) * 0.05;
+      lo -= pad;
+      hi += pad;
+
+      // 2. Count values per bin.
+      const binWidth = (hi - lo) / BINS;
+      const counts = new Array(BINS).fill(0);
+      for (const v of values) counts[Math.min(BINS - 1, Math.floor((v - lo) / binWidth))]++;
+      let maxCount = 0;
+      for (const c of counts) if (c > maxCount) maxCount = c;
+
+      // 3. Plot area and value → pixel helpers.
+      const left = 56, right = 16, top = 28, bottom = 36;
+      const plotW = width - left - right;
+      const plotH = height - top - bottom;
+      const baseY = top + plotH;
+      const xPx = value => left + (value - lo) / (hi - lo) * plotW;
+      const yPx = count => baseY - count / maxCount * plotH;
+
+      // 4. Grid lines and count labels.
+      ctx.font = "12px Arial";
+      ctx.lineWidth = 1;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (let k = 0; k <= 4; k++) {
+        const c = maxCount * k / 4;
+        const y = yPx(c);
+        ctx.strokeStyle = "#e5e5e5";
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(left + plotW, y);
+        ctx.stroke();
+        ctx.fillStyle = "#666";
+        ctx.fillText(Math.round(c).toLocaleString(), left - 6, y);
+      }
+
+      // 5. Bars: red outside the limits, blue inside.
+      const barPx = plotW / BINS;
+      for (let i = 0; i < BINS; i++) {
+        if (counts[i] === 0) continue;
+        const center = lo + (i + 0.5) * binWidth;
+        const outside = (specMin !== null && center < specMin) || (specMax !== null && center > specMax);
+        ctx.fillStyle = outside ? RED : BLUE;
+        const x = left + i * barPx + 1;
+        const w = Math.max(1, barPx - 2);
+        const y = yPx(counts[i]);
+        const r = Math.min(4, w / 2, baseY - y);
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, baseY - y, [r, r, 0, 0]);
+        ctx.fill();
+      }
+
+      // 6. x-axis line and labels.
+      ctx.strokeStyle = "#999";
+      ctx.beginPath();
+      ctx.moveTo(left, baseY);
+      ctx.lineTo(left + plotW, baseY);
+      ctx.stroke();
+      ctx.fillStyle = "#666";
+      ctx.textBaseline = "top";
+      for (let k = 0; k <= 4; k++) {
+        const value = lo + (hi - lo) * k / 4;
+        ctx.textAlign = k === 0 ? "left" : k === 4 ? "right" : "center";
+        ctx.fillText(value.toFixed(3), xPx(value), baseY + 8);
+      }
+
+      // 7. Nominal and spec lines.
+      drawLine(ctx, xPx(nominal), top, baseY, "#888", false, "");
+      if (specMin !== null) drawLine(ctx, xPx(specMin), top, baseY, RED, true, "LSL " + specMin);
+      if (specMax !== null) drawLine(ctx, xPx(specMax), top, baseY, RED, true, "USL " + specMax);
+
+      // Remember the bars on the canvas itself, for its tooltip.
+      canvas.hover = { lo, binWidth, counts, left, barPx, top, runs: values.length };
+    }
+
+    function drawLine(ctx, x, top, bottom, color, dashed, label) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash(dashed ? [6, 4] : []);
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (label) {
+        ctx.fillStyle = "#222";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(label, x, top - 6);
+      }
+    }
+
+    // Tooltip for one chart: show the bar under the mouse.
+    function attachTooltip(canvas) {
+      const tooltip = canvas.nextElementSibling;
+      canvas.addEventListener("mousemove", event => {
+        const h = canvas.hover;
+        if (!h) return;
+        const mouseX = event.offsetX;
+        const i = Math.floor((mouseX - h.left) / h.barPx);
+        if (i < 0 || i >= BINS) { tooltip.style.display = "none"; return; }
+        const from = h.lo + i * h.binWidth;
+        const pct = (100 * h.counts[i] / h.runs).toFixed(2);
+        tooltip.innerHTML = `${t("tipRange", from.toFixed(4), (from + h.binWidth).toFixed(4))}<br>
+                             ${t("tipCount", h.counts[i].toLocaleString(), pct)}`;
+        tooltip.style.display = "block";
+        const flip = mouseX > canvas.clientWidth - 180;
+        tooltip.style.left = (flip ? mouseX - tooltip.offsetWidth - 12 : mouseX + 12) + "px";
+        tooltip.style.top = (h.top + 4) + "px";
+      });
+      canvas.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+    }
+
+    window.addEventListener("resize", () => { if (lastResults) drawAllCharts(); });
+
+    // =====================================================================
+    // TEMPLATES (ready-made examples to start from)
+    // =====================================================================
+
+    // Finds a feature id by item + feature name (only used while building templates).
+    function fid(item, name) { return item.features.find(f => f.name === name).id; }
+
+    function pinLink(child, parent, p1, h1, p2, h2, mode) {
+      Object.assign(child.locate, { method: "twoPin", mode,
+        p1: fid(parent, p1), h1: fid(child, h1), p2: fid(parent, p2), h2: fid(child, h2) });
+    }
+
+    function newCheck(name, itemP, featP, itemQ, featQ, measure, min, max) {
+      return { id: uid("c"), name, p: fid(itemP, featP), q: fid(itemQ, featQ), measure, min, max };
+    }
+
+    // The templates use ±X / ±Y tolerances only, so they fit the simple view.
+
+    // Parts A and B, each with two locating holes and one mating point at (40, 30).
+    function makePart(name, parentId, holes, pointName) {
+      const part = newItem(name, "part", parentId);
+      part.features = holes.map(([n, x, y]) => newFeature(n, "hole", x, y, 3.05, 0, 0.025, 0.025, 0));
+      part.features.push(newFeature(pointName, "point", 40, 30, 0, 0, 0.05, 0.05, 0));
+      return part;
+    }
+
+    function carrierPin(name, x, y, d) {
+      return newFeature(name, "pin", x, y, d, 0, 0.01, 0.01, 0);
+    }
+
+    function abChecks(a, b) {
+      return [
+        newCheck("A–B ΔX", a, "PtA", b, "PtB", "dx", -0.2, 0.2),
+        newCheck("A–B ΔY", a, "PtA", b, "PtB", "dy", -0.2, 0.2),
+        newCheck("A–B " + t("radial"), a, "PtA", b, "PtB", "radial", null, 0.25)
+      ];
+    }
+
+    // Condition 1: part A and part B are both located on the same carrier.
+    function templateCondition1() {
+      nextId = 1;
+      const carrier = newItem(t("tplCarrier"), "fixture", null);
+      carrier.features = [carrierPin("PA1", 0, 0, 3), carrierPin("PA2", 80, 0, 3),
+                          carrierPin("PB1", 0, 60, 3), carrierPin("PB2", 80, 60, 3)];
+      const a = makePart(t("tplPartA"), carrier.id, [["HA1", 0, 0], ["HA2", 80, 0]], "PtA");
+      const b = makePart(t("tplPartB"), carrier.id, [["HB1", 0, 60], ["HB2", 80, 60]], "PtB");
+      pinLink(a, carrier, "PA1", "HA1", "PA2", "HA2", "free");
+      pinLink(b, carrier, "PB1", "HB1", "PB2", "HB2", "free");
+      return { description: t("tplCond1Desc"), items: [carrier, a, b], checks: abChecks(a, b) };
+    }
+
+    // Condition 2: A on the carrier; an align block on the carrier; B on the align block.
+    function templateCondition2() {
+      nextId = 1;
+      const carrier = newItem(t("tplCarrier"), "fixture", null);
+      carrier.features = [carrierPin("PA1", 0, 0, 3), carrierPin("PA2", 80, 0, 3),
+                          carrierPin("PK1", -20, 90, 4), carrierPin("PK2", 100, 90, 4)];
+      const block = newItem(t("tplBlock"), "fixture", carrier.id);
+      block.features = [
+        newFeature("K1", "hole", -20, 90, 4.03, 0, 0.015, 0.015, 0),
+        newFeature("K2", "hole", 100, 90, 4.03, 0, 0.015, 0.015, 0),
+        carrierPin("PB1", 0, 60, 3), carrierPin("PB2", 80, 60, 3)
+      ];
+      pinLink(block, carrier, "PK1", "K1", "PK2", "K2", "free");
+      const a = makePart(t("tplPartA"), carrier.id, [["HA1", 0, 0], ["HA2", 80, 0]], "PtA");
+      const b = makePart(t("tplPartB"), block.id, [["HB1", 0, 60], ["HB2", 80, 60]], "PtB");
+      pinLink(a, carrier, "PA1", "HA1", "PA2", "HA2", "free");
+      pinLink(b, block, "PB1", "HB1", "PB2", "HB2", "free");
+      return { description: t("tplCond2Desc"), items: [carrier, a, block, b], checks: abChecks(a, b) };
+    }
+
+    // Condition 3: A on the carrier by two pins; B is a rectangle with a row of holes on
+    // each side, tightened by matching carrier pins (pin pattern, best fit).
+    function templateCondition3() {
+      nextId = 1;
+      const carrier = newItem(t("tplCarrier"), "fixture", null);
+      carrier.features = [carrierPin("PA1", 0, 0, 3), carrierPin("PA2", 80, 0, 3)];
+      const a = makePart(t("tplPartA"), carrier.id, [["HA1", 0, 0], ["HA2", 80, 0]], "PtA");
+      pinLink(a, carrier, "PA1", "HA1", "PA2", "HA2", "free");
+
+      const b = newItem(t("tplPartB"), "part", carrier.id);
+      const rect = { shape: "rect", x: 40, y: 30, w: 120, h: 100, nx: 4, px: 25, ny: 3, py: 25 };
+      for (const p of patternPoints(rect)) {
+        b.features.push(newFeature("H-" + p.suffix, "hole", p.x, p.y, 3.02, 0, 0.02, 0.02, 0));
+        carrier.features.push(carrierPin("P-" + p.suffix, p.x, p.y, 3));
+      }
+      b.features.push(newFeature("PtB", "point", 40, 30, 0, 0, 0.05, 0.05, 0));
+      Object.assign(b.locate, { method: "pattern", mode: "tight" });
+      return { description: t("tplCond3Desc"), items: [carrier, a, b], checks: abChecks(a, b) };
+    }
+
+    // Condition 4: A pushed against edge stops; B in a pocket; B's pin must enter A's hole.
+    function templateCondition4() {
+      nextId = 1;
+      const stopPin = (n, x, y) => newFeature(n, "pin", x, y, 6, 0, 0.01, 0.01, 0);
+      const carrier = newItem(t("tplCarrier"), "fixture", null);
+      carrier.features = [stopPin("S1", 10, -3), stopPin("S2", 90, -3), stopPin("S3", -3, 25),
+                          newFeature("Pocket", "point", 40, 30, 0, 0, 0.02, 0.02, 0)];
+
+      const a = newItem(t("tplPartA"), "part", carrier.id);
+      a.features = [
+        newFeature("E1", "point", 10, 0, 0, 0, 0, 0.03, 0),     // bottom edge: profile → ±Y
+        newFeature("E2", "point", 90, 0, 0, 0, 0, 0.03, 0),
+        newFeature("E3", "point", 0, 25, 0, 0, 0.03, 0, 0),     // left edge: profile → ±X
+        newFeature("HoleA", "hole", 40, 30, 4.2, 0, 0.03, 0.03, 0)
+      ];
+      Object.assign(a.locate, { method: "stops", n1: "-y", n2: "-x",
+        s1p: fid(carrier, "S1"), s1h: fid(a, "E1"), s2p: fid(carrier, "S2"), s2h: fid(a, "E2"),
+        s3p: fid(carrier, "S3"), s3h: fid(a, "E3") });
+
+      const b = newItem(t("tplPartB"), "part", carrier.id);
+      b.features = [newFeature("CenterB", "point", 40, 30, 0, 0, 0, 0, 0),
+                    newFeature("PinB", "pin", 40, 30, 4.0, 0, 0.02, 0.02, 0)];
+      Object.assign(b.locate, { method: "pocket", pc: fid(carrier, "Pocket"), hc: fid(b, "CenterB"),
+                                pw: 60, ph: 40, cx: 0.1, cy: 0.1, cxTol: 0, cyTol: 0 });
+
+      const checks = [
+        { id: uid("c"), name: "B → A", p: b.id, q: a.id, measure: "fit", min: 0, max: null },
+        newCheck("HoleA–PinB", a, "HoleA", b, "PinB", "radial", null, 0.1)
+      ];
+      return { description: t("tplCond4Desc"), items: [carrier, a, b], checks };
+    }
+
+    // Component example: A on fixture AA; B fixed to A; C fixed to B (known tolerances);
+    // fixture AB on AA; D on AB. D's two pins must go into holes on B and C.
+    function templateComponent() {
+      nextId = 1;
+      const pin = (n, x, y, d) => newFeature(n, "pin", x, y, d, 0, 0.01, 0.01, 0);
+      const hole = (n, x, y, d, tol) => newFeature(n, "hole", x, y, d, 0, tol, tol, 0);
+      const point = (n, x, y, tol) => newFeature(n, "point", x, y, 0, 0, tol, tol, 0);
+
+      const AA = newItem("AA", "fixture", null);
+      AA.features = [pin("PA1", 0, 0, 3), pin("PA2", 120, 0, 3), pin("PK1", -20, 100, 4), pin("PK2", 140, 100, 4)];
+
+      const A = newItem("A", "part", AA.id);
+      A.features = [hole("HA1", 0, 0, 3.05, 0.025), hole("HA2", 120, 0, 3.05, 0.025), point("PtA", 60, 40, 0.05)];
+      pinLink(A, AA, "PA1", "HA1", "PA2", "HA2", "free");
+
+      const B = newItem("B", "part", A.id);
+      B.features = [point("RefB", 30, 40, 0), hole("HB", 30, 60, 3.1, 0.02)];
+      Object.assign(B.locate, { method: "known", pivot: fid(B, "RefB"), tx: 0.03, ty: 0.03, tt: 0.02 });
+
+      const C = newItem("C", "part", B.id);
+      C.features = [point("RefC", 90, 40, 0), hole("HC", 90, 60, 3.1, 0.02)];
+      Object.assign(C.locate, { method: "known", pivot: fid(C, "RefC"), tx: 0.02, ty: 0.02, tt: 0.02 });
+
+      const AB = newItem("AB", "fixture", AA.id);
+      AB.features = [hole("K1", -20, 100, 4.03, 0.015), hole("K2", 140, 100, 4.03, 0.015),
+                     pin("PD1", 0, 120, 3), pin("PD2", 120, 120, 3)];
+      pinLink(AB, AA, "PK1", "K1", "PK2", "K2", "free");
+
+      const D = newItem("D", "part", AB.id);
+      D.features = [hole("HD1", 0, 120, 3.05, 0.025), hole("HD2", 120, 120, 3.05, 0.025),
+                    point("PtD", 60, 40, 0.05),
+                    newFeature("PinB", "pin", 30, 60, 2.9, 0, 0.02, 0.02, 0),
+                    newFeature("PinC", "pin", 90, 60, 2.9, 0, 0.02, 0.02, 0)];
+      pinLink(D, AB, "PD1", "HD1", "PD2", "HD2", "free");
+
+      const checks = [
+        newCheck("A–D", A, "PtA", D, "PtD", "radial", null, 0.2),
+        newCheck("B–D", B, "HB", D, "PinB", "radial", null, 0.1),
+        newCheck("C–D", C, "HC", D, "PinC", "radial", null, 0.1),
+        { id: uid("c"), name: "D → A+B+C", p: D.id, q: "*", measure: "fit", min: 0, max: null }
+      ];
+      return { description: t("tplCompDesc"), items: [AA, A, B, C, AB, D], checks };
+    }
+
+    const TEMPLATES = {
+      1: [templateCondition1, "tplCond1"], 2: [templateCondition2, "tplCond2"],
+      3: [templateCondition3, "tplCond3"], 4: [templateCondition4, "tplCond4"],
+      5: [templateComponent, "tplComp"]
+    };
+
+    function loadTemplate(n) {
+      if (isDirty() && !confirm(t("confirmReplace"))) return;
+      const [make, nameKey] = TEMPLATES[n];
+      model = make();
+      model.name = t(nameKey);
+      afterReplace();
+    }
+
+    // Start: bring back the last work from this browser, or else Condition 1.
+    let restored = false;
+    if (canStore) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORE_KEY));
+        if (saved) {
+          applyProject(saved);
+          cleanSnapshot = saved.clean ? JSON.stringify(model) : null;
+          restored = true;
+        }
+      } catch (e) {}   // a damaged browser copy: just start fresh
+    }
+    if (!restored) {
+      model = templateCondition1();
+      model.name = t("tplCond1");
+      cleanSnapshot = JSON.stringify(model);
+    }
+    applyLanguage();
+    if (restored) setMessages([{ type: "info", key: "restored", args: [] }]);
+
+    // Phone app: keep a copy for offline use (only possible on an https:// address).
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>
